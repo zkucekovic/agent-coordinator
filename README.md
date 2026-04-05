@@ -1,8 +1,8 @@
-# Coordination Workspace
+# Agent Coordinator
 
-A two-agent workflow system where an **Architect** and an **Engineer** collaborate on software delivery through a shared `handoff.md` file. All communication is structured, append-only, and machine-parseable.
+A multi-agent workflow system where an **Architect**, **Developer**, and **QA Engineer** collaborate on software delivery through a shared `handoff.md` file. All communication is structured, append-only, and machine-parseable.
 
-**`coordinator.py` drives both agents automatically** using real OpenCode sessions — the entire architect/engineer loop runs hands-free until `plan_complete`.
+**`coordinator.py` drives all agents automatically** using real OpenCode sessions — the full loop runs hands-free until `plan_complete`.
 
 ## Requirements
 
@@ -14,30 +14,33 @@ A two-agent workflow system where an **Architect** and an **Engineer** collabora
 
 ```
 coordination/
-  coordinator.py        ← drives both OpenCode sessions automatically
-  handoff.md            ← append-only communication channel between agents
-  plan.md               ← implementation plan (reference)
-  tasks.json            ← task registry with lifecycle status
+  coordinator.py        ← drives OpenCode sessions automatically
+  agents.json           ← agent configuration (models, prompt files, retry policy)
   prompts/
-    architect.md        ← paste this into your architect agent session
-    developer.md        ← paste this into your developer agent session
-    qa_engineer.md      ← paste this into your QA engineer agent session
-    shared_rules.md     ← rules both agents must follow
+    architect.md        ← architect system prompt
+    developer.md        ← developer system prompt
+    qa_engineer.md      ← QA engineer system prompt
+    shared_rules.md     ← rules all agents must follow
+    agent_template.md   ← template for adding new agent types
   docs/
     protocol.md         ← handoff block format specification
     workflow.md         ← full workflow loop and task lifecycle
+  scripts/
+    parse_next.sh       ← extract NEXT: field from handoff.md (shell automation)
   src/
-    models.py           ← enums and dataclasses
-    handoff_parser.py   ← parse_block() and extract_latest()
-    task_store.py       ← TaskStore with lifecycle enforcement
-    workflow.py         ← workflow state helpers
+    domain/             ← models, lifecycle rules, retry policy
+    application/        ← task service, router, prompt builder
+    infrastructure/     ← file I/O, OpenCode runner, event log
   tests/
-    test_handoff_parser.py
-    test_task_state.py
-    test_workflow.py
+    integration/        ← real OpenCode session tests (RUN_INTEGRATION_TESTS=1)
+    test_*.py           ← unit tests
+  workspace/            ← example project workspace
+    handoff.md          ← append-only agent communication log
+    tasks.json          ← task registry with lifecycle status
+    plan.md             ← implementation plan
 ```
 
-> **Important:** All `python3` commands and imports below must be run from inside the `coordination/` directory. The `src` package is not installed globally.
+> **Important:** All `python3` commands and imports must be run from inside the `coordination/` directory. The `src` package is not installed globally.
 
 ---
 
@@ -85,20 +88,17 @@ Use this to quickly check whose turn it is and whether the workflow needs human 
 
 ## Automated Mode: coordinator.py
 
-`coordinator.py` drives the full architect/engineer loop automatically using real OpenCode (`opencode run`) sessions. No manual copy-pasting required.
+`coordinator.py` drives the full multi-agent loop automatically using real OpenCode (`opencode run`) sessions. No manual copy-pasting required.
 
 ### Quick Start
 
 ```bash
-# 1. Create a workspace directory with tasks.json, handoff.md, and prompts/
-mkdir myproject && cd myproject
-cp /path/to/coordination/prompts/ prompts/ -r
-
-# Create tasks.json  (see "Starting a New Project" below for format)
-# Create handoff.md  (see "Starting a New Project" below for initial block)
-
-# 2. Run the coordinator
 cd /path/to/coordination/
+
+# Use the built-in example workspace (workspace/ directory)
+python3 coordinator.py
+
+# Or point at your own project workspace
 python3 coordinator.py --workspace /path/to/myproject --max-turns 20
 ```
 
@@ -106,20 +106,18 @@ python3 coordinator.py --workspace /path/to/myproject --max-turns 20
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--workspace PATH` | required | Directory containing `handoff.md`, `tasks.json`, `prompts/` |
-| `--max-turns N` | 20 | Safety limit on total agent turns |
-| `--architect-model MODEL` | opencode default | Model for architect (e.g. `claude-sonnet-4-5`) |
-| `--engineer-model MODEL` | opencode default | Model for engineer |
+| `--workspace PATH` | `workspace/` | Directory containing `handoff.md` and optionally `tasks.json` |
+| `--max-turns N` | 30 | Safety limit on total agent turns |
 | `--reset` | false | Delete `.coordinator_sessions.json` and start fresh sessions |
 | `--quiet` | false | Suppress per-turn verbose output |
 
 ### What it does
 
 1. Reads `handoff.md` to determine whose turn it is (`NEXT:` field of the latest block)
-2. Builds a prompt: role-specific system prompt + shared rules + full handoff.md + task
+2. Builds a prompt: role-specific system prompt + shared rules + full handoff.md + task context
 3. Calls `opencode run` with `--session <id>` so each agent maintains persistent context
 4. Waits for the agent to append a new `---HANDOFF---` block to `handoff.md`
-5. Routes to the other agent based on the new `NEXT:` field
+5. Routes to the next agent based on the new `NEXT:` field
 6. Stops when `STATUS: plan_complete`, `NEXT: human`, or `blocked` is detected
 
 Session IDs are saved in `<workspace>/.coordinator_sessions.json` — re-running the script continues where it left off unless `--reset` is passed.

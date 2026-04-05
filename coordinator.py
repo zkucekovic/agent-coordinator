@@ -25,7 +25,7 @@ from src.infrastructure.task_repository import JsonTaskRepository
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-DEFAULT_WORKSPACE = Path(__file__).parent.resolve()
+DEFAULT_WORKSPACE = Path(__file__).parent.resolve() / "workspace"
 DEFAULT_MAX_TURNS = 30
 SESSION_FILE = ".coordinator_sessions.json"
 EVENT_LOG_FILE = "workflow_events.jsonl"
