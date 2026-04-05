@@ -42,15 +42,35 @@ The architect reads the brief, decomposes the work, assigns tasks one at a time,
 
 ## Example: building a feature with three agents
 
-This is the default workflow. An architect plans the work, a developer implements it, and a QA engineer validates it. The architect has final authority — it can override QA, challenge results, or request rework from anyone.
+The coordinator is designed to work from project specifications and implementation plans. You can either provide these upfront, or let the architect create them.
 
-**Step 1: Set up the workspace**
+### Option A: provide a specification
 
-Create a directory with a `handoff.md` that describes the initial task:
+Write a `SPECIFICATION.md` in your workspace describing what you want built. The architect reads it, creates an implementation plan (`plan.md`), and starts assigning tasks.
 
 ```bash
 mkdir my-feature && cd my-feature
 ```
+
+Create `SPECIFICATION.md`:
+
+```markdown
+# User Authentication
+
+## Requirements
+- POST /auth/login accepts email and password, returns a signed JWT
+- POST /auth/logout invalidates the token server-side
+- POST /auth/refresh issues a new JWT before the current one expires
+- All endpoints validate input and return appropriate error codes
+- All endpoints have unit tests
+
+## Constraints
+- Use the existing User model in src/models/user.py
+- No new dependencies — use the stdlib jwt module
+- Tokens expire after 1 hour
+```
+
+Create `handoff.md`:
 
 ```
 ---HANDOFF---
@@ -59,15 +79,44 @@ STATUS: continue
 NEXT: architect
 TASK_ID: task-000
 TITLE: Build user authentication
-SUMMARY: Implement JWT-based auth with login, logout, and token refresh endpoints.
+SUMMARY: Read SPECIFICATION.md and create an implementation plan. Decompose into tasks and begin.
 ACCEPTANCE:
-- login endpoint returns a signed JWT
-- logout invalidates the token
-- token refresh issues a new JWT before expiry
-- all endpoints have tests
+- specification has been read
+- implementation plan created in plan.md
+- first task assigned to developer
 CONSTRAINTS:
-- use existing database models
-- no new dependencies
+- none
+FILES_TO_TOUCH:
+- handoff.md
+- plan.md
+- tasks.json
+CHANGED_FILES:
+- n/a
+VALIDATION:
+- n/a
+BLOCKERS:
+- none
+---END---
+```
+
+### Option B: describe it in the handoff
+
+If you don't have a spec, put a general description in the initial handoff. The architect will create the specification and plan before starting work.
+
+```
+---HANDOFF---
+ROLE: architect
+STATUS: continue
+NEXT: architect
+TASK_ID: task-000
+TITLE: Build user authentication
+SUMMARY: We need JWT-based auth with login, logout, and token refresh. Use the existing User model. No new dependencies. Write the spec, plan the work, and start building.
+ACCEPTANCE:
+- specification written to SPECIFICATION.md
+- implementation plan created in plan.md
+- first task assigned to developer
+CONSTRAINTS:
+- none
 FILES_TO_TOUCH:
 - handoff.md
 CHANGED_FILES:
@@ -79,7 +128,7 @@ BLOCKERS:
 ---END---
 ```
 
-**Step 2: Run the coordinator**
+### Running the workflow
 
 ```bash
 python3 coordinator.py --workspace ./my-feature --max-turns 20
@@ -87,7 +136,7 @@ python3 coordinator.py --workspace ./my-feature --max-turns 20
 
 What happens next, automatically:
 
-1. The architect reads the handoff, breaks the work into a concrete task with acceptance criteria, and hands off to the developer
+1. The architect reads the specification (or creates one), writes an implementation plan, and assigns the first task to the developer
 2. The developer implements the task and hands off to the architect
 3. The architect routes to QA for validation
 4. QA runs tests, checks acceptance criteria, and reports back to the architect
@@ -258,11 +307,22 @@ planned → ready_for_engineering → in_engineering → ready_for_architect_rev
 
 Each agent's session ID is saved in `<workspace>/.coordinator_sessions.json`. Re-running the coordinator resumes conversations with full context. Use `--reset` to start fresh.
 
-## AGENTS.md integration
+## Project files: specification, plan, and AGENTS.md
 
-If your project has an `AGENTS.md` (or `agents.md`) file, the coordinator automatically includes it in agent prompts on their first turn. Your existing coding standards, architecture rules, and testing requirements are enforced without duplicating them into coordinator prompt files.
+The coordinator automatically detects and injects key project files into agent prompts on their first turn. No configuration needed — just place the files in your workspace.
 
-Injection order: role instructions > project rules (AGENTS.md) > shared protocol rules.
+**Specification files** (checked in order, first match wins):
+`SPECIFICATION.md`, `specification.md`, `spec.md`, `SPEC.md`, `PRD.md`, `prd.md`, `requirements.md`, `REQUIREMENTS.md`
+
+**Implementation plan files** (checked in order, first match wins):
+`IMPLEMENTATION_PLAN.md`, `implementation_plan.md`, `plan.md`, `PLAN.md`
+
+**Project rules**:
+`AGENTS.md` or `agents.md`
+
+The spec and plan give agents the context they need to understand the project. The AGENTS.md file enforces your existing coding standards. All three are optional — the coordinator works without them, but agents perform better with explicit requirements.
+
+Injection order in the prompt: role instructions > project rules (AGENTS.md) > specification and plan > shared protocol rules.
 
 ## Adding a new backend
 

@@ -36,7 +36,7 @@ The coordinator will run the full architect-developer-QA loop. When it finishes,
 
 | File | Purpose |
 |---|---|
-| `plan.md` | Project brief describing the Tetris game requirements |
+| `SPECIFICATION.md` | Project specification — the requirements the architect works from |
 | `handoff.md` | Initial handoff block that starts the workflow |
 | `tasks.json` | Empty task registry (the architect will populate it) |
 
@@ -44,6 +44,7 @@ After the coordinator runs, you'll also see:
 
 | File | Created by |
 |---|---|
+| `plan.md` | The architect (implementation plan) |
 | `tetris.html` | The developer agent |
 | `workflow_events.jsonl` | Audit log of every agent turn |
 | `.coordinator_sessions.json` | Saved session IDs for continuity |

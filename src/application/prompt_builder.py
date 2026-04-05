@@ -55,16 +55,21 @@ class PromptBuilder:
         task_context = self._task_context(next_task)
 
         project_rules = self._load_project_rules(workspace)
+        project_docs = self._load_project_docs(workspace) if first_turn else ""
 
         if first_turn:
             project_section = (
                 f"\n\n---\n\n## Project Rules (from AGENTS.md)\n\n{project_rules}\n"
                 if project_rules else ""
             )
+            docs_section = (
+                f"\n\n---\n\n{project_docs}\n"
+                if project_docs else ""
+            )
             preamble = (
                 f"You are the **{role.upper()} agent** for this project. "
                 f"Your working directory is `{workspace}`.\n\n"
-                f"{role_prompt}{project_section}\n\n---\n\n{shared_rules}\n\n---\n"
+                f"{role_prompt}{project_section}{docs_section}\n\n---\n\n{shared_rules}\n\n---\n"
             )
         else:
             preamble = (
@@ -118,6 +123,44 @@ class PromptBuilder:
             if path.exists():
                 return path.read_text()
         return ""
+
+    def _load_project_docs(self, workspace: Path) -> str:
+        """Load specification and plan files from the workspace if present.
+
+        Looks for common naming conventions: SPECIFICATION.md, spec.md,
+        IMPLEMENTATION_PLAN.md, plan.md, etc. Returns concatenated content
+        with section headers.
+        """
+        spec_names = (
+            "SPECIFICATION.md", "specification.md", "spec.md", "SPEC.md",
+            "PRD.md", "prd.md", "requirements.md", "REQUIREMENTS.md",
+        )
+        plan_names = (
+            "IMPLEMENTATION_PLAN.md", "implementation_plan.md",
+            "plan.md", "PLAN.md",
+        )
+
+        sections: list[str] = []
+
+        for name in spec_names:
+            path = workspace / name
+            if path.exists():
+                sections.append(
+                    f"## Project Specification (from {name})\n\n"
+                    f"{path.read_text().strip()}"
+                )
+                break
+
+        for name in plan_names:
+            path = workspace / name
+            if path.exists():
+                sections.append(
+                    f"## Implementation Plan (from {name})\n\n"
+                    f"{path.read_text().strip()}"
+                )
+                break
+
+        return "\n\n---\n\n".join(sections)
 
     @staticmethod
     def _task_context(task: Task | None) -> str:

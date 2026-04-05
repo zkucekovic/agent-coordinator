@@ -203,6 +203,83 @@ class TestPromptBuilder(unittest.TestCase):
         )
         self.assertNotIn("Project rule: use TDD.", prompt)
 
+    def test_specification_injected_on_first_turn(self):
+        """SPECIFICATION.md in workspace is injected on first turn."""
+        (self._workspace / "SPECIFICATION.md").write_text("Build a REST API.")
+        prompt = self._builder.build(
+            role="architect",
+            workspace=self._workspace,
+            handoff_content="",
+            agent_cfg=self._cfg(),
+            first_turn=True,
+        )
+        self.assertIn("Build a REST API.", prompt)
+        self.assertIn("Project Specification", prompt)
+
+    def test_spec_md_variant_detected(self):
+        """spec.md is also detected as a specification file."""
+        (self._workspace / "spec.md").write_text("Spec content here.")
+        prompt = self._builder.build(
+            role="architect",
+            workspace=self._workspace,
+            handoff_content="",
+            agent_cfg=self._cfg(),
+            first_turn=True,
+        )
+        self.assertIn("Spec content here.", prompt)
+
+    def test_plan_injected_on_first_turn(self):
+        """plan.md in workspace is injected on first turn."""
+        (self._workspace / "plan.md").write_text("Step 1: do the thing.")
+        prompt = self._builder.build(
+            role="architect",
+            workspace=self._workspace,
+            handoff_content="",
+            agent_cfg=self._cfg(),
+            first_turn=True,
+        )
+        self.assertIn("Step 1: do the thing.", prompt)
+        self.assertIn("Implementation Plan", prompt)
+
+    def test_spec_and_plan_both_injected(self):
+        """Both spec and plan are injected when both exist."""
+        (self._workspace / "SPECIFICATION.md").write_text("The requirements.")
+        (self._workspace / "IMPLEMENTATION_PLAN.md").write_text("The plan.")
+        prompt = self._builder.build(
+            role="architect",
+            workspace=self._workspace,
+            handoff_content="",
+            agent_cfg=self._cfg(),
+            first_turn=True,
+        )
+        self.assertIn("The requirements.", prompt)
+        self.assertIn("The plan.", prompt)
+
+    def test_project_docs_not_on_subsequent_turns(self):
+        """Spec and plan are only injected on first turn."""
+        (self._workspace / "SPECIFICATION.md").write_text("The requirements.")
+        prompt = self._builder.build(
+            role="architect",
+            workspace=self._workspace,
+            handoff_content="",
+            agent_cfg=self._cfg(),
+            first_turn=False,
+        )
+        self.assertNotIn("The requirements.", prompt)
+
+    def test_no_docs_is_fine(self):
+        """No spec or plan files — prompt still builds correctly."""
+        prompt = self._builder.build(
+            role="architect",
+            workspace=self._workspace,
+            handoff_content="test",
+            agent_cfg=self._cfg(),
+            first_turn=True,
+        )
+        self.assertIn("test", prompt)
+        self.assertNotIn("Project Specification", prompt)
+        self.assertNotIn("Implementation Plan", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()
