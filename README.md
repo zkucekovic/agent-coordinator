@@ -1,200 +1,84 @@
 # Agent Coordinator
 
-A multi-agent workflow system where an **Architect**, **Developer**, and **QA Engineer** collaborate on software delivery through a shared `handoff.md` file. All communication is structured, append-only, and machine-parseable.
+A framework for running multi-agent AI workflows where each agent has a defined role, a strict communication protocol, and persistent session state across turns.
 
-**`coordinator.py` drives all agents automatically** using real OpenCode sessions — the full loop runs hands-free until `plan_complete`.
+Agents communicate through a shared `handoff.md` file using a structured, append-only protocol. The coordinator drives the loop automatically — routing each turn to the right agent, maintaining context, logging events, and enforcing task lifecycle rules.
+
+## How it works
+
+Each agent turn follows the same pattern:
+
+1. The coordinator reads `handoff.md` and identifies whose turn it is (`NEXT:` field)
+2. It builds a prompt from the agent's system prompt, shared rules, the current handoff log, and optional task context
+3. It calls `opencode run` with a persistent session ID, so each agent accumulates context across turns
+4. It waits for the agent to append a new structured block to `handoff.md`
+5. It reads the new `NEXT:` field and routes to the appropriate agent
+6. It stops when `STATUS: plan_complete`, `NEXT: human`, or a blocked state is reached
+
+Every turn is recorded in `workflow_events.jsonl` for auditing.
+
+## Default agents
+
+The default configuration ships with three agents:
+
+**Architect** — plans the work, assigns tasks, reviews all output, and has final authority over every decision. Can override QA verdicts, challenge results, and request rework from any agent.
+
+**Developer** — implements assigned tasks, runs validation, reports results. Returns to the architect; never skips review.
+
+**QA Engineer** — validates developer work against acceptance criteria. Reports pass/fail with evidence. Returns to the architect, who makes the final call.
+
+The standard flow:
+
+```
+architect --> developer --> qa_engineer --> architect
+                                              |
+                            approve / challenge / rework
+```
 
 ## Requirements
 
-- **Python 3.10+** (uses union type syntax: `X | None`)
-- **`opencode` CLI** installed (for `coordinator.py`)
-- No other external packages — standard library only
+- Python 3.10+
+- [opencode](https://opencode.ai) CLI installed and authenticated
+- No third-party Python packages — standard library only
 
-## Directory Structure
-
-```
-coordination/
-  coordinator.py        ← drives OpenCode sessions automatically
-  agents.json           ← agent configuration (models, prompt files, retry policy)
-  prompts/
-    architect.md        ← architect system prompt
-    developer.md        ← developer system prompt
-    qa_engineer.md      ← QA engineer system prompt
-    shared_rules.md     ← rules all agents must follow
-    agent_template.md   ← template for adding new agent types
-  docs/
-    protocol.md         ← handoff block format specification
-    workflow.md         ← full workflow loop and task lifecycle
-  scripts/
-    parse_next.sh       ← extract NEXT: field from handoff.md (shell automation)
-  src/
-    domain/             ← models, lifecycle rules, retry policy
-    application/        ← task service, router, prompt builder
-    infrastructure/     ← file I/O, OpenCode runner, event log
-  tests/
-    integration/        ← real OpenCode session tests (RUN_INTEGRATION_TESTS=1)
-    test_*.py           ← unit tests
-  workspace/            ← example project workspace
-    handoff.md          ← append-only agent communication log
-    tasks.json          ← task registry with lifecycle status
-    plan.md             ← implementation plan
-```
-
-> **Important:** All `python3` commands and imports must be run from inside the `coordination/` directory. The `src` package is not installed globally.
-
----
-
-## Running Tests
+## Getting started
 
 ```bash
-cd coordination/
-python3 -m unittest discover tests/ -v
-```
+git clone https://github.com/zkucekovic/agent-coordinator.git
+cd agent-coordinator
 
-Expected: `Ran 35 tests in ~0.003s — OK`
-
----
-
-## Inspecting the Current Workflow State
-
-```bash
-cd coordination/
-python3 -c "
-from src.workflow import get_workflow_state
-import json
-state = get_workflow_state('handoff.md')
-print(json.dumps(state, indent=2))
-"
-```
-
-Example output:
-
-```json
-{
-  "valid": true,
-  "next_actor": "engineer",
-  "status": "continue",
-  "task_id": "task-003",
-  "is_complete": false,
-  "is_blocked": false,
-  "needs_human": false,
-  "errors": []
-}
-```
-
-Use this to quickly check whose turn it is and whether the workflow needs human attention.
-
----
-
-## Automated Mode: coordinator.py
-
-`coordinator.py` drives the full multi-agent loop automatically using real OpenCode (`opencode run`) sessions. No manual copy-pasting required.
-
-### Quick Start
-
-```bash
-cd /path/to/coordination/
-
-# Use the built-in example workspace (workspace/ directory)
+# Run with the included example workspace
 python3 coordinator.py
 
-# Or point at your own project workspace
-python3 coordinator.py --workspace /path/to/myproject --max-turns 20
+# Or point at your own project
+python3 coordinator.py --workspace /path/to/your/project --max-turns 20
 ```
 
 ### Options
 
 | Flag | Default | Description |
-|------|---------|-------------|
+|---|---|---|
 | `--workspace PATH` | `workspace/` | Directory containing `handoff.md` and optionally `tasks.json` |
-| `--max-turns N` | 30 | Safety limit on total agent turns |
-| `--reset` | false | Delete `.coordinator_sessions.json` and start fresh sessions |
-| `--quiet` | false | Suppress per-turn verbose output |
+| `--max-turns N` | 30 | Maximum agent turns before stopping |
+| `--reset` | false | Clear saved session IDs and start fresh |
+| `--quiet` | false | Suppress per-turn output |
 
-### What it does
+## Setting up a new project workspace
 
-1. Reads `handoff.md` to determine whose turn it is (`NEXT:` field of the latest block)
-2. Builds a prompt: role-specific system prompt + shared rules + full handoff.md + task context
-3. Calls `opencode run` with `--session <id>` so each agent maintains persistent context
-4. Waits for the agent to append a new `---HANDOFF---` block to `handoff.md`
-5. Routes to the next agent based on the new `NEXT:` field
-6. Stops when `STATUS: plan_complete`, `NEXT: human`, or `blocked` is detected
+A workspace is a directory with a `handoff.md` file. Everything else is optional.
 
-Session IDs are saved in `<workspace>/.coordinator_sessions.json` — re-running the script continues where it left off unless `--reset` is passed.
-
-### Real example
+### 1. Initialize handoff.md
 
 ```
-$ python3 coordinator.py --workspace /tmp/myproject --max-turns 6
-
-[Turn 1] status=continue  next=architect  task=task-000
-  Agent: ARCHITECT
-  ✓ handoff.md updated → status=continue, next=engineer
-
-[Turn 2] status=continue  next=engineer  task=task-001
-  Agent: ENGINEER
-  ✓ handoff.md updated → status=review_required, next=architect
-
-[Turn 3] status=review_required  next=architect  task=task-001
-  Agent: ARCHITECT
-  ✓ handoff.md updated → status=plan_complete, next=human
-
-✅  PLAN COMPLETE — workflow finished successfully.
-  Total turns:     3
-  Architect turns: 2
-  Engineer turns:  1
-```
-
----
-
-## Starting a New Project
-
-### 1. Create `tasks.json`
-
-The task registry must be a JSON object with a `"tasks"` array:
-
-```json
-{
-  "tasks": [
-    {
-      "id": "task-001",
-      "title": "Initialize project structure",
-      "status": "planned",
-      "acceptance_criteria": []
-    },
-    {
-      "id": "task-002",
-      "title": "Implement core logic",
-      "status": "planned",
-      "acceptance_criteria": []
-    }
-  ]
-}
-```
-
-Valid `status` values: `planned`, `ready_for_engineering`, `in_engineering`, `ready_for_architect_review`, `rework_requested`, `done`, `blocked`
-
-### 2. Initialize `handoff.md`
-
-```bash
-cat > handoff.md << 'EOF'
-# Handoff Log
-
-This file is append-only.
-
-## Initial State
-
-Human operator initialized the workflow.
-
 ---HANDOFF---
 ROLE: architect
 STATUS: continue
 NEXT: architect
 TASK_ID: task-000
 TITLE: Initialize plan
-SUMMARY: Review the project brief and assign the first engineering task.
+SUMMARY: Review the project brief and assign the first task.
 ACCEPTANCE:
-- first task is clearly defined
+- first task is clearly defined with acceptance criteria
 CONSTRAINTS:
 - none
 FILES_TO_TOUCH:
@@ -206,204 +90,172 @@ VALIDATION:
 BLOCKERS:
 - none
 ---END---
-EOF
 ```
 
-### 3. Run the Coordinator (Automatic)
+### 2. Optionally create tasks.json
+
+```json
+{
+  "tasks": [
+    {
+      "id": "task-001",
+      "title": "Implement login endpoint",
+      "status": "planned"
+    }
+  ]
+}
+```
+
+Valid status values: `planned`, `ready_for_engineering`, `in_engineering`, `ready_for_architect_review`, `rework_requested`, `done`, `blocked`
+
+### 3. Run the coordinator
 
 ```bash
-cd /path/to/coordination/
-python3 coordinator.py --workspace /path/to/your-project
+python3 coordinator.py --workspace /path/to/your/project
 ```
 
-The coordinator drives both agents until `plan_complete`. See the [Automated Mode](#automated-mode-coordinatorpy) section above.
+## Adding or customizing agents
 
-### 3b. Manual Mode
+Agent configuration lives in `agents.json`:
 
-If you prefer to drive agents yourself:
-
-Copy the contents of `prompts/architect.md` and paste it as the system prompt (or first message) into your architect agent. Then give the agent:
-
-- the current `handoff.md`
-- the project brief or spec
-
-The architect will append a task assignment to `handoff.md`.
-
-### 4. Start the Engineer Session (Manual only)
-
-Copy the contents of `prompts/developer.md` (or `prompts/qa_engineer.md`) and `prompts/shared_rules.md` into the relevant agent session. Give it:
-
-- the current `handoff.md`
-- access to the project workspace
-
-The engineer reads the latest block, implements the assigned task, then appends a `STATUS: review_required` block.
-
-### 5. Repeat (Manual only)
-
-Switch back to the architect, give it the updated `handoff.md`. Continue until the architect writes `STATUS: plan_complete`.
-
----
-
-## Programmatic API
-
-All code must be run from the `coordination/` directory.
-
-### Parse a handoff block
-
-```python
-from src.handoff_parser import parse_block
-
-block_text = """
-ROLE: architect
-STATUS: continue
-NEXT: engineer
-TASK_ID: task-001
-TITLE: Build the parser
-SUMMARY: Implement parse_block and extract_latest.
-ACCEPTANCE:
-- valid block returns HandoffMessage
-- missing field returns errors
-CONSTRAINTS:
-- stdlib only
-FILES_TO_TOUCH:
-- src/handoff_parser.py
-CHANGED_FILES:
-- n/a
-VALIDATION:
-- n/a
-BLOCKERS:
-- none
-"""
-
-msg, errors = parse_block(block_text)
-if msg:
-    print(msg.role.value, msg.next.value, msg.task_id)
-else:
-    print("Parse failed:", errors)
+```json
+{
+  "retry_policy": {
+    "max_rework": 3,
+    "on_exceed": "needs_human"
+  },
+  "agents": {
+    "architect": {
+      "model": null,
+      "prompt_file": "prompts/architect.md"
+    },
+    "developer": {
+      "model": null,
+      "prompt_file": "prompts/developer.md"
+    },
+    "qa_engineer": {
+      "model": null,
+      "prompt_file": "prompts/qa_engineer.md"
+    }
+  }
+}
 ```
 
-### Extract the latest block from a file
+To add an agent (e.g. a security reviewer):
 
-```python
-from src.handoff_parser import extract_latest
+1. Create `prompts/security_reviewer.md` — use `prompts/agent_template.md` as a starting point
+2. Add the agent to `agents.json`
+3. In the relevant prompt files, include `security_reviewer` as a possible `NEXT:` value
 
-content = open("handoff.md").read()
-msg, errors = extract_latest(content)
-if msg:
-    print("Next actor:", msg.next.value)
-    print("Status:", msg.status.value)
-```
+The coordinator routes dynamically based on the `NEXT:` field — no code changes required.
 
-### Manage tasks
+## Handoff block format
 
-```python
-from src.task_store import TaskStore
-from src.models import TaskStatus
-
-store = TaskStore("tasks.json")
-
-# List all tasks
-for task in store.all():
-    print(task.id, task.status.value)
-
-# Advance a task through the lifecycle
-store.update_status("task-001", TaskStatus.IN_ENGINEERING)
-store.update_status("task-001", TaskStatus.READY_FOR_ARCHITECT_REVIEW)
-store.update_status("task-001", TaskStatus.DONE)
-
-# Only one task can be in_engineering at a time
-# store.update_status("task-002", TaskStatus.IN_ENGINEERING)  # raises ValueError if task-001 is active
-```
-
-Valid state transitions:
-
-```
-planned → ready_for_engineering → in_engineering → ready_for_architect_review → done
-                                       ↕                        ↕
-                                 rework_requested ──────────────┘
-                                       ↕
-                              (any state) → blocked → in_engineering
-```
-
-### Check workflow routing logic
-
-```python
-from src.models import AgentRole, HandoffStatus, NextActor, HandoffMessage
-from src.workflow import get_next_actor, is_plan_complete, is_blocked, is_human_escalation
-
-msg = HandoffMessage(
-    role=AgentRole.ENGINEER,
-    status=HandoffStatus.REVIEW_REQUIRED,
-    next=NextActor.ARCHITECT,
-    task_id="task-001",
-    title="Done",
-    summary="Implemented X.",
-)
-
-print(get_next_actor(msg).value)    # "architect"
-print(is_plan_complete(msg))        # False
-print(is_blocked(msg))              # False
-```
-
----
-
-## Handoff Block Format
-
-Every agent turn must end with a structured block. See `docs/protocol.md` for the full spec.
+Every agent turn must end with a structured block:
 
 ```
 ---HANDOFF---
-ROLE: architect | engineer
+ROLE: architect | developer | qa_engineer
 STATUS: continue | approved | rework_required | review_required | blocked | needs_human | plan_complete
-NEXT: architect | engineer | human | none
-TASK_ID: task-NNN
-TITLE: Short task label
-SUMMARY: One-paragraph explanation
+NEXT: architect | developer | qa_engineer | human | none
+TASK_ID: task-001
+TITLE: Short label
+SUMMARY: What was done or decided this turn.
 ACCEPTANCE:
 - criterion one
 - criterion two
 CONSTRAINTS:
-- constraint one
+- constraint
 FILES_TO_TOUCH:
-- src/foo.py          ← architect uses this
+- src/example.py
 CHANGED_FILES:
-- src/foo.py          ← engineer uses this
+- src/example.py
 VALIDATION:
-- test result
+- python3 -m pytest tests/ -- 42 passed
 BLOCKERS:
 - none
 ---END---
 ```
 
----
+`handoff.md` is append-only. Agents read the latest block and append their response — prior history is never modified.
 
-## Role Summary
+## Human intervention
 
-| Responsibility | Architect | Engineer |
-|---|---|---|
-| Planning and task decomposition | ✅ | ❌ |
-| Writing production code | ❌ | ✅ |
-| Defining acceptance criteria | ✅ | ❌ |
-| Running validation | ❌ | ✅ |
-| Reviewing completed work | ✅ | ❌ |
-| Declaring completion (`plan_complete`) | ✅ | ❌ |
+The workflow stops and waits when any block contains `NEXT: human`. To resume:
 
----
+1. Read the latest block to understand why it stopped
+2. Resolve the issue (answer a question, fix a file, clarify scope)
+3. Append a new block manually with the correct `NEXT:` value
+4. Re-run the coordinator
 
-## Human Intervention
+You can also intervene proactively at any point by appending a block before the next agent runs.
 
-At any point you can:
-- Edit `handoff.md` to correct a bad block (note the edit with a comment)
-- Edit `tasks.json` directly to fix task status
-- Override the next actor by appending a new block with `ROLE: architect` or `ROLE: engineer`
-- Stop the workflow by leaving the `NEXT: human` state unresolved
+## Retry policy
 
-The workflow resumes from the latest valid `---HANDOFF---` block whenever either agent is restarted.
+When a task exceeds `max_rework` cycles, the coordinator automatically sets its status based on `on_exceed`:
 
----
+- `"needs_human"` — stops and waits for operator input (default)
+- `"blocked"` — marks the task blocked
 
-## Further Reading
+Configure per project in `agents.json` under `retry_policy`.
 
-- `docs/protocol.md` — complete handoff block specification
-- `docs/workflow.md` — 10-step loop, lifecycle diagrams, session instructions
-- `prompts/shared_rules.md` — the 10 rules both agents must follow
+## Session persistence
+
+Each agent's OpenCode session ID is saved in `<workspace>/.coordinator_sessions.json`. Re-running the coordinator resumes from where it left off, with full conversation context intact. Use `--reset` to start fresh sessions.
+
+## Event log
+
+Every turn is appended to `<workspace>/workflow_events.jsonl`:
+
+```json
+{"ts": "2026-04-05T21:00:00Z", "turn": 1, "agent": "developer", "task_id": "task-001", "status_before": "continue", "status_after": "review_required", "session_id": "ses_abc123"}
+```
+
+## Running tests
+
+Unit tests — no external dependencies, no API calls:
+
+```bash
+python3 -m unittest discover tests/ -v
+```
+
+Integration tests — run real OpenCode sessions (uses tokens):
+
+```bash
+RUN_INTEGRATION_TESTS=1 python3 -m unittest discover tests/integration/ -v
+```
+
+## Project structure
+
+```
+coordinator.py          entry point
+agents.json             agent configuration
+prompts/
+  architect.md          architect system prompt
+  developer.md          developer system prompt
+  qa_engineer.md        QA engineer system prompt
+  shared_rules.md       rules all agents must follow
+  agent_template.md     template for new agent types
+docs/
+  protocol.md           handoff block specification
+  workflow.md           workflow loop and task lifecycle
+scripts/
+  parse_next.sh         shell utility: extract NEXT field from handoff.md
+src/
+  domain/               models, lifecycle rules, retry policy
+  application/          task service, router, prompt builder
+  infrastructure/       file I/O, OpenCode subprocess, event log
+tests/
+  integration/          live OpenCode tests (RUN_INTEGRATION_TESTS=1)
+  test_*.py             unit tests
+workspace/
+  handoff.md            example handoff log
+  tasks.json            example task registry
+  plan.md               example plan
+```
+
+## Further reading
+
+- `docs/protocol.md` — complete handoff block specification and turn rules
+- `docs/workflow.md` — full workflow loop, task lifecycle, and session instructions
+- `prompts/shared_rules.md` — the shared rules all agents must follow
