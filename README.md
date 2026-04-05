@@ -30,6 +30,16 @@ python3 coordinator.py --workspace /path/to/your/project
 
 Requirements: Python 3.10+, no third-party packages. Install whichever backend CLI you want to use ([opencode](https://opencode.ai), [claude](https://docs.anthropic.com/en/docs/claude-code)).
 
+## Demo: build a Tetris game
+
+The `examples/tetris-demo/` directory contains a ready-to-run demo. It starts from a project brief and produces a fully playable single-file HTML Tetris game through the full architect-developer-QA loop:
+
+```bash
+python3 coordinator.py --workspace examples/tetris-demo --max-turns 30
+```
+
+The architect reads the brief, decomposes the work, assigns tasks one at a time, the developer implements, QA validates, and the architect approves or requests rework. When it finishes, open `examples/tetris-demo/tetris.html` in your browser. See [examples/tetris-demo/README.md](examples/tetris-demo/README.md) for details.
+
 ## Example: building a feature with three agents
 
 This is the default workflow. An architect plans the work, a developer implements it, and a QA engineer validates it. The architect has final authority — it can override QA, challenge results, or request rework from anyone.
@@ -317,6 +327,8 @@ tests/
 docs/
   protocol.md             handoff block specification
   workflow.md             workflow loop and task lifecycle details
+examples/
+  tetris-demo/            ready-to-run demo that builds a Tetris game
 workspace/                example workspace with sample handoff and tasks
 ```
 
