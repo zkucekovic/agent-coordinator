@@ -9,6 +9,7 @@ from src.domain.models import (
     HandoffMessage,
     HandoffStatus,
     NextActor,
+    RunResult,
     Task,
     TaskStatus,
     ValidationResult,

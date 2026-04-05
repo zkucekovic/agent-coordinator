@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-coordinator.py — orchestrates multi-agent OpenCode sessions via handoff.md.
+coordinator.py — orchestrates multi-agent workflow sessions via handoff.md.
 
+Backend-agnostic: works with OpenCode, Claude Code, or a human operator.
 Agent configuration lives in agents.json in the workspace directory.
 See README.md for full usage documentation.
 """
@@ -17,12 +18,12 @@ from pathlib import Path
 
 from src.application.prompt_builder import PromptBuilder
 from src.application.router import WorkflowRouter
+from src.application.runner import AgentRunner
 from src.application.task_service import TaskService
 from src.domain.models import HandoffStatus, TaskStatus
 from src.domain.retry_policy import RetryPolicy
 from src.infrastructure.event_log import EventLog
 from src.infrastructure.handoff_reader import HandoffReader
-from src.infrastructure.opencode_runner import OpenCodeRunner
 from src.infrastructure.session_store import SessionStore
 from src.infrastructure.task_repository import JsonTaskRepository
 
@@ -41,6 +42,8 @@ _DEFAULT_AGENTS: dict = {
     "developer":   {"model": None, "prompt_file": "prompts/developer.md"},
     "qa_engineer": {"model": None, "prompt_file": "prompts/qa_engineer.md"},
 }
+
+DEFAULT_BACKEND = "opencode"
 
 # Mapping from HandoffStatus to the TaskStatus the task should transition to.
 _HANDOFF_TO_TASK_STATUS: dict[HandoffStatus, TaskStatus] = {
@@ -72,6 +75,41 @@ def load_retry_policy(config: dict) -> RetryPolicy:
     if config and "retry_policy" in config:
         return RetryPolicy.from_dict(config["retry_policy"])
     return RetryPolicy()
+
+
+# ── Runner factory ────────────────────────────────────────────────────────────
+
+_RUNNER_REGISTRY: dict[str, type] = {}
+
+
+def _ensure_registry() -> None:
+    """Lazily populate the runner registry to avoid import-time side effects."""
+    if _RUNNER_REGISTRY:
+        return
+    from src.infrastructure.opencode_runner import OpenCodeRunner
+    from src.infrastructure.claude_runner import ClaudeCodeRunner
+    from src.infrastructure.manual_runner import ManualRunner
+    _RUNNER_REGISTRY.update({
+        "opencode": OpenCodeRunner,
+        "claude": ClaudeCodeRunner,
+        "manual": ManualRunner,
+    })
+
+
+def create_runner(backend: str, verbose: bool = True) -> AgentRunner:
+    """Create a runner instance for the given backend name."""
+    _ensure_registry()
+    cls = _RUNNER_REGISTRY.get(backend)
+    if cls is None:
+        supported = ", ".join(sorted(_RUNNER_REGISTRY.keys()))
+        raise ValueError(f"Unknown backend: {backend!r}. Supported: {supported}")
+    return cls(verbose=verbose)
+
+
+def create_runner_for_agent(agent_cfg: dict, default_backend: str, verbose: bool) -> AgentRunner:
+    """Create the appropriate runner for a specific agent config."""
+    backend = agent_cfg.get("backend", default_backend)
+    return create_runner(backend, verbose=verbose)
 
 
 # ── Task status sync ─────────────────────────────────────────────────────────
@@ -115,14 +153,17 @@ def run_coordinator(workspace: Path, max_turns: int, reset: bool, verbose: bool)
     config = load_config(workspace)
     agents = load_agent_config(config)
     retry_policy = load_retry_policy(config)
+    default_backend = config.get("default_backend", DEFAULT_BACKEND)
 
     handoff_path = workspace / "handoff.md"
     handoff_reader = HandoffReader(handoff_path)
     session_store = SessionStore(workspace / SESSION_FILE)
     event_log = EventLog(workspace / EVENT_LOG_FILE)
-    runner = OpenCodeRunner(verbose=verbose)
     router = WorkflowRouter()
     builder = PromptBuilder(coordinator_dir=COORDINATOR_DIR)
+
+    # Cache runners per backend to avoid re-creating for each turn
+    runner_cache: dict[str, AgentRunner] = {}
 
     tasks_path = workspace / "tasks.json"
     task_service = (
@@ -162,11 +203,16 @@ def run_coordinator(workspace: Path, max_turns: int, reset: bool, verbose: bool)
             sys.exit(1)
 
         agent_cfg = agents[agent]
+        backend_name = agent_cfg.get("backend", default_backend)
+        if backend_name not in runner_cache:
+            runner_cache[backend_name] = create_runner(backend_name, verbose=verbose)
+        runner = runner_cache[backend_name]
+
         next_task = task_service.next_ready_task() if task_service else None
         first_turn = session_store.get(agent) is None
         prompt = builder.build(agent, workspace, handoff_reader.read_raw(), agent_cfg, next_task, first_turn)
 
-        print(f"  Agent: {agent.upper()}")
+        print(f"  Agent: {agent.upper()} ({backend_name})")
         if verbose:
             print(f"  {'─'*40}")
 

@@ -8,23 +8,17 @@ from __future__ import annotations
 
 import json
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
 
-
-@dataclass(frozen=True)
-class RunResult:
-    session_id: str
-    text: str
+from src.application.runner import AgentRunner
+from src.domain.models import RunResult
 
 
-class OpenCodeRunner:
+class OpenCodeRunner(AgentRunner):
     """
     Runs an opencode session non-interactively and returns the result.
 
-    Separating this from the coordinator makes it straightforward to:
-    - stub in tests (replace with a fake that writes to handoff.md)
-    - swap for a different backend (e.g. a local model runner)
+    Implements the AgentRunner interface for the OpenCode CLI backend.
     """
 
     def __init__(self, verbose: bool = True) -> None:

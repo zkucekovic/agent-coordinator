@@ -1,4 +1,5 @@
 {
+  "default_backend": "opencode",
   "retry_policy": {
     "max_rework": 3,
     "on_exceed": "needs_human"
@@ -6,14 +7,17 @@
   "agents": {
     "architect": {
       "model": null,
+      "backend": "opencode",
       "prompt_file": "prompts/architect.md"
     },
     "developer": {
       "model": null,
+      "backend": "opencode",
       "prompt_file": "prompts/developer.md"
     },
     "qa_engineer": {
       "model": null,
+      "backend": "opencode",
       "prompt_file": "prompts/qa_engineer.md"
     }
   }

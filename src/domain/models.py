@@ -9,6 +9,13 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 
+@dataclass(frozen=True)
+class RunResult:
+    """Result of a single agent turn, returned by any AgentRunner implementation."""
+    session_id: str
+    text: str
+
+
 class TaskStatus(Enum):
     PLANNED = "planned"
     READY_FOR_ENGINEERING = "ready_for_engineering"
