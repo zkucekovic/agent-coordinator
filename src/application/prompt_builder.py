@@ -46,11 +46,17 @@ class PromptBuilder:
         task_hint = f"(current task: {next_task.id})" if next_task else ""
         task_context = self._task_context(next_task)
 
+        project_rules = self._load_project_rules(workspace)
+
         if first_turn:
+            project_section = (
+                f"\n\n---\n\n## Project Rules (from AGENTS.md)\n\n{project_rules}\n"
+                if project_rules else ""
+            )
             preamble = (
                 f"You are the **{role.upper()} agent** for this project. "
                 f"Your working directory is `{workspace}`.\n\n"
-                f"{role_prompt}\n\n---\n\n{shared_rules}\n\n---\n"
+                f"{role_prompt}{project_section}\n\n---\n\n{shared_rules}\n\n---\n"
             )
         else:
             preamble = (
@@ -84,6 +90,14 @@ class PromptBuilder:
     def _load_shared_rules(self, workspace: Path) -> str:
         shared_rules_file = workspace / "prompts" / "shared_rules.md"
         return shared_rules_file.read_text() if shared_rules_file.exists() else ""
+
+    def _load_project_rules(self, workspace: Path) -> str:
+        """Load AGENTS.md or agents.md from the workspace if present."""
+        for name in ("AGENTS.md", "agents.md"):
+            path = workspace / name
+            if path.exists():
+                return path.read_text()
+        return ""
 
     @staticmethod
     def _task_context(task: Task | None) -> str:

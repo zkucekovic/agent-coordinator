@@ -254,8 +254,23 @@ workspace/
   plan.md               example plan
 ```
 
+## Using your project's AGENTS.md
+
+Many repositories already have an `AGENTS.md` (or `agents.md`) file that defines coding standards, architectural constraints, testing requirements, and behavioral rules for AI agents. The coordinator respects this automatically.
+
+If an `AGENTS.md` or `agents.md` file exists in the workspace directory, the prompt builder includes its content in the first-turn preamble for every agent. This means:
+
+- Your project's existing coding standards are enforced without copy-pasting them into coordinator prompts
+- The coordinator's own prompt files focus on workflow protocol (how to hand off), while `AGENTS.md` handles project rules (how to code)
+- Different projects get different rules automatically — point the coordinator at a different workspace and it picks up that project's standards
+
+The injection order in the prompt is: agent role instructions, then project rules (`AGENTS.md`), then shared protocol rules (`shared_rules.md`). Role instructions take priority if there is a conflict with project rules.
+
+If no `AGENTS.md` exists in the workspace, the coordinator proceeds normally with just its own prompts.
+
 ## Further reading
 
+- `docs/ANALYSIS.md` — codebase analysis: known issues, improvement ideas, and integration notes
 - `docs/protocol.md` — complete handoff block specification and turn rules
 - `docs/workflow.md` — full workflow loop, task lifecycle, and session instructions
 - `prompts/shared_rules.md` — the shared rules all agents must follow
