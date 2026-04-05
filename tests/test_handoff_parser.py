@@ -1,8 +1,8 @@
 """Tests for src.handoff_parser."""
 
 import unittest
-from src.handoff_parser import parse_block, extract_latest
-from src.models import HandoffStatus, HandoffMessage
+from agent_coordinator.handoff_parser import parse_block, extract_latest
+from agent_coordinator.models import HandoffStatus, HandoffMessage
 
 VALID_ARCHITECT_BLOCK = """
 ROLE: architect

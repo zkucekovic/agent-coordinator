@@ -6,7 +6,7 @@ import shutil
 import unittest
 from pathlib import Path
 
-from coordinator import (
+from agent_coordinator.cli import (
     load_config,
     load_agent_config,
     load_retry_policy,
@@ -16,10 +16,10 @@ from coordinator import (
     _DEFAULT_AGENTS,
     _HANDOFF_TO_TASK_STATUS,
 )
-from src.application.task_service import TaskService
-from src.domain.models import HandoffStatus, Task, TaskStatus
-from src.domain.retry_policy import RetryPolicy
-from src.infrastructure.task_repository import JsonTaskRepository
+from agent_coordinator.application.task_service import TaskService
+from agent_coordinator.domain.models import HandoffStatus, Task, TaskStatus
+from agent_coordinator.domain.retry_policy import RetryPolicy
+from agent_coordinator.infrastructure.task_repository import JsonTaskRepository
 
 
 class TestLoadConfig(unittest.TestCase):

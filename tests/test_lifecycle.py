@@ -1,12 +1,12 @@
 """Tests for src.domain.lifecycle — validate_transition and is_valid_transition."""
 
 import unittest
-from src.domain.lifecycle import (
+from agent_coordinator.domain.lifecycle import (
     STANDARD_TRANSITIONS,
     is_valid_transition,
     validate_transition,
 )
-from src.domain.models import TaskStatus
+from agent_coordinator.domain.models import TaskStatus
 
 
 class TestIsValidTransition(unittest.TestCase):

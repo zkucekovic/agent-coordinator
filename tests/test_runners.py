@@ -5,12 +5,12 @@ import shutil
 import unittest
 from pathlib import Path
 
-from src.application.runner import AgentRunner
-from src.domain.models import RunResult
-from src.infrastructure.opencode_runner import OpenCodeRunner
-from src.infrastructure.claude_runner import ClaudeCodeRunner
-from src.infrastructure.manual_runner import ManualRunner
-from coordinator import create_runner, create_runner_for_agent, _RUNNER_REGISTRY
+from agent_coordinator.application.runner import AgentRunner
+from agent_coordinator.domain.models import RunResult
+from agent_coordinator.infrastructure.opencode_runner import OpenCodeRunner
+from agent_coordinator.infrastructure.claude_runner import ClaudeCodeRunner
+from agent_coordinator.infrastructure.manual_runner import ManualRunner
+from agent_coordinator.cli import create_runner, create_runner_for_agent, _RUNNER_REGISTRY
 
 
 class TestAgentRunnerInterface(unittest.TestCase):

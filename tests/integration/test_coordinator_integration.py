@@ -26,8 +26,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from tests.integration.conftest import requires_integration
-from src.infrastructure.handoff_reader import HandoffReader
-from src.domain.models import HandoffStatus
+from agent_coordinator.infrastructure.handoff_reader import HandoffReader
+from agent_coordinator.domain.models import HandoffStatus
 
 # ── Workspace fixtures ────────────────────────────────────────────────────────
 
@@ -190,7 +190,7 @@ class TestCoordinatorSingleEngineerTurn(unittest.TestCase):
         shutil.rmtree(self._workspace, ignore_errors=True)
 
     def _run(self, max_turns: int = 1) -> None:
-        from coordinator import run_coordinator
+        from agent_coordinator.cli import run_coordinator
         run_coordinator(
             workspace=self._workspace,
             max_turns=max_turns,
@@ -280,7 +280,7 @@ class TestCoordinatorTwoTurnCycle(unittest.TestCase):
         shutil.rmtree(self._workspace, ignore_errors=True)
 
     def _run(self) -> None:
-        from coordinator import run_coordinator
+        from agent_coordinator.cli import run_coordinator
         run_coordinator(
             workspace=self._workspace,
             max_turns=2,

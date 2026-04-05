@@ -20,14 +20,14 @@ From the repository root:
 
 ```bash
 # Using OpenCode (default)
-python3 coordinator.py --workspace examples/tetris-demo
+agent-coord --workspace examples/tetris-demo
 
 # Using Claude Code
-python3 coordinator.py --workspace examples/tetris-demo
+agent-coord --workspace examples/tetris-demo
 # (set default_backend to "claude" in agents.json first)
 
 # Watch with verbose output
-python3 coordinator.py --workspace examples/tetris-demo --max-turns 30
+agent-coord --workspace examples/tetris-demo --max-turns 30
 ```
 
 The coordinator will run the full architect-developer-QA loop. When it finishes, open `examples/tetris-demo/tetris.html` in your browser.

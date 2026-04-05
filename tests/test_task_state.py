@@ -5,8 +5,8 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from src.task_store import TaskStore
-from src.models import TaskStatus
+from agent_coordinator.task_store import TaskStore
+from agent_coordinator.models import TaskStatus
 
 SAMPLE_TASKS = {
     "tasks": [

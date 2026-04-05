@@ -6,8 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.domain.models import Task, TaskStatus
-from src.infrastructure.task_repository import JsonTaskRepository
+from agent_coordinator.domain.models import Task, TaskStatus
+from agent_coordinator.infrastructure.task_repository import JsonTaskRepository
 
 
 def _write_json(data: dict | list) -> Path:

@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-coordinator"
+version = "0.1.0"
+description = "Tool-agnostic multi-agent workflow coordinator. Orchestrate AI coding agents through a structured handoff protocol."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Zoran Kucekovic" },
+]
+keywords = [
+    "multi-agent",
+    "ai",
+    "workflow",
+    "orchestration",
+    "opencode",
+    "claude",
+    "coding-agent",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Testing",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/zkucekovic/agent-coordinator"
+Repository = "https://github.com/zkucekovic/agent-coordinator"
+Issues = "https://github.com/zkucekovic/agent-coordinator/issues"
+
+[project.scripts]
+agent-coord = "agent_coordinator.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["agent_coordinator*"]
+
+[tool.setuptools.package-data]
+agent_coordinator = ["prompts/*.md"]

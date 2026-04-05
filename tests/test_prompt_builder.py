@@ -5,8 +5,8 @@ import os
 import unittest
 from pathlib import Path
 
-from src.application.prompt_builder import PromptBuilder
-from src.domain.models import Task, TaskStatus
+from agent_coordinator.application.prompt_builder import PromptBuilder
+from agent_coordinator.domain.models import Task, TaskStatus
 
 
 def _make_workspace() -> Path:

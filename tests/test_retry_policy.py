@@ -1,7 +1,7 @@
 """Tests for src.domain.retry_policy."""
 
 import unittest
-from src.domain.retry_policy import RetryPolicy
+from agent_coordinator.domain.retry_policy import RetryPolicy
 
 
 class TestRetryPolicy(unittest.TestCase):

@@ -4,8 +4,8 @@ import json
 import os
 import tempfile
 import unittest
-from src.models import HandoffStatus, HandoffMessage
-from src.workflow import (
+from agent_coordinator.models import HandoffStatus, HandoffMessage
+from agent_coordinator.workflow import (
     get_next_actor, is_plan_complete, is_human_escalation, is_blocked,
     get_workflow_state,
 )

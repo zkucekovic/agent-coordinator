@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 *.pyo
 .coordinator_sessions.json
+*.egg-info/
+dist/
+build/
+.eggs/

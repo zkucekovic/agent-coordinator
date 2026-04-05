@@ -5,8 +5,8 @@ import os
 import unittest
 from pathlib import Path
 
-from src.infrastructure.handoff_reader import HandoffReader
-from src.domain.models import HandoffStatus
+from agent_coordinator.infrastructure.handoff_reader import HandoffReader
+from agent_coordinator.domain.models import HandoffStatus
 
 
 _VALID_BLOCK = """\

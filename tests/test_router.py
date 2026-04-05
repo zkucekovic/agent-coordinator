@@ -1,8 +1,8 @@
 """Tests for src.application.router (WorkflowRouter)."""
 
 import unittest
-from src.application.router import WorkflowRouter, RoutingDecision
-from src.domain.models import HandoffMessage, HandoffStatus
+from agent_coordinator.application.router import WorkflowRouter, RoutingDecision
+from agent_coordinator.domain.models import HandoffMessage, HandoffStatus
 
 
 def _msg(status: HandoffStatus, next_actor: str = "engineer") -> HandoffMessage:

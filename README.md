@@ -12,30 +12,43 @@ This project takes a different approach: the coordination protocol is just text 
 
 ## Quick start
 
+## Installation
+
+```bash
+pip install agent-coordinator
+```
+
+Or install from source:
+
 ```bash
 git clone https://github.com/zkucekovic/agent-coordinator.git
 cd agent-coordinator
-
-# Run with OpenCode (default)
-python3 coordinator.py --workspace /path/to/your/project
-
-# Or with Claude Code
-# (set default_backend in agents.json to "claude")
-python3 coordinator.py --workspace /path/to/your/project
-
-# Or run fully manual to see what prompts get generated
-# (set default_backend to "manual")
-python3 coordinator.py --workspace /path/to/your/project
+pip install -e .
 ```
 
 Requirements: Python 3.10+, no third-party packages. Install whichever backend CLI you want to use ([opencode](https://opencode.ai), [claude](https://docs.anthropic.com/en/docs/claude-code)).
+
+## Quick start
+
+```bash
+# Run with OpenCode (default)
+agent-coord --workspace /path/to/your/project
+
+# Or with Claude Code
+# (set default_backend in agents.json to "claude")
+agent-coord --workspace /path/to/your/project
+
+# Or run fully manual to see what prompts get generated
+# (set default_backend to "manual")
+agent-coord --workspace /path/to/your/project
+```
 
 ## Demo: build a Tetris game
 
 The `examples/tetris-demo/` directory contains a ready-to-run demo. It starts from a project brief and produces a fully playable single-file HTML Tetris game through the full architect-developer-QA loop:
 
 ```bash
-python3 coordinator.py --workspace examples/tetris-demo --max-turns 30
+agent-coord --workspace examples/tetris-demo --max-turns 30
 ```
 
 The architect reads the brief, decomposes the work, assigns tasks one at a time, the developer implements, QA validates, and the architect approves or requests rework. When it finishes, open `examples/tetris-demo/tetris.html` in your browser. See [examples/tetris-demo/README.md](examples/tetris-demo/README.md) for details.
@@ -131,7 +144,7 @@ BLOCKERS:
 ### Running the workflow
 
 ```bash
-python3 coordinator.py --workspace ./my-feature --max-turns 20
+agent-coord --workspace ./my-feature --max-turns 20
 ```
 
 What happens next, automatically:
@@ -369,15 +382,17 @@ RUN_INTEGRATION_TESTS=1 python3 -m unittest discover tests/integration/ -v
 ## Project structure
 
 ```
-coordinator.py            entry point and orchestration loop
-agents.json               agent roles, backends, and retry policy
-prompts/
-  architect.md            architect prompt (final authority over all decisions)
-  developer.md            developer prompt
-  qa_engineer.md          QA engineer prompt
-  shared_rules.md         protocol rules all agents follow
-  agent_template.md       starting point for new agent types
-src/
+pyproject.toml            package configuration (pip install)
+coordinator.py            backwards-compatible entry point
+agents.json               default agent and backend configuration
+agent_coordinator/
+  cli.py                  CLI entry point and orchestration loop
+  prompts/                prompt templates (shipped with package)
+    architect.md          architect prompt (final authority)
+    developer.md          developer prompt
+    qa_engineer.md        QA engineer prompt
+    shared_rules.md       protocol rules all agents follow
+    agent_template.md     starting point for new agent types
   domain/                 models, task lifecycle, retry policy
   application/            task service, router, prompt builder, runner interface
   infrastructure/         backend runners (opencode, claude, manual), file I/O, event log

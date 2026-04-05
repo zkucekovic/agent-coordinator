@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.infrastructure.session_store import SessionStore
+from agent_coordinator.infrastructure.session_store import SessionStore
 
 
 def _tmp_path() -> Path:

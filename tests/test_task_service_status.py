@@ -6,9 +6,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.application.task_service import TaskService
-from src.domain.models import TaskStatus
-from src.infrastructure.task_repository import JsonTaskRepository
+from agent_coordinator.application.task_service import TaskService
+from agent_coordinator.domain.models import TaskStatus
+from agent_coordinator.infrastructure.task_repository import JsonTaskRepository
 
 
 def _make_service(tasks: list[dict]) -> tuple[TaskService, Path]:

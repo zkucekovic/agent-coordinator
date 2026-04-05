@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.infrastructure.event_log import EventLog
+from agent_coordinator.infrastructure.event_log import EventLog
 
 
 class TestEventLog(unittest.TestCase):

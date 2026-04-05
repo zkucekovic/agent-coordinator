@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from tests.integration.conftest import requires_integration
-from src.infrastructure.opencode_runner import OpenCodeRunner
+from agent_coordinator.infrastructure.opencode_runner import OpenCodeRunner
 
 
 @requires_integration
