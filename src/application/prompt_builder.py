@@ -17,7 +17,15 @@ class PromptBuilder:
 
     Separating this from the coordinator keeps prompt logic independently
     testable and swappable (e.g. to support different prompt strategies).
+
+    Args:
+        coordinator_dir: Absolute path to the coordinator's installation
+            directory. Prompt files are resolved relative to this directory
+            first, then relative to the workspace as a fallback.
     """
+
+    def __init__(self, coordinator_dir: Path | None = None) -> None:
+        self._coordinator_dir = coordinator_dir
 
     def build(
         self,
@@ -78,18 +86,30 @@ class PromptBuilder:
             f"- End with a valid `---HANDOFF---` … `---END---` block\n"
         )
 
+    def _resolve_file(self, relative_path: str, workspace: Path) -> Path | None:
+        """Resolve a file relative to coordinator_dir first, then workspace."""
+        if self._coordinator_dir:
+            candidate = self._coordinator_dir / relative_path
+            if candidate.exists():
+                return candidate
+        candidate = workspace / relative_path
+        if candidate.exists():
+            return candidate
+        return None
+
     def _load_role_prompt(self, role: str, workspace: Path, agent_cfg: dict) -> str:
-        prompt_file = workspace / agent_cfg.get("prompt_file", f"prompts/{role}.md")
-        if prompt_file.exists():
-            return prompt_file.read_text()
+        prompt_rel = agent_cfg.get("prompt_file", f"prompts/{role}.md")
+        resolved = self._resolve_file(prompt_rel, workspace)
+        if resolved:
+            return resolved.read_text()
         return (
             f"You are the **{role.upper()} agent**. "
             f"Follow the shared rules and handoff protocol."
         )
 
     def _load_shared_rules(self, workspace: Path) -> str:
-        shared_rules_file = workspace / "prompts" / "shared_rules.md"
-        return shared_rules_file.read_text() if shared_rules_file.exists() else ""
+        resolved = self._resolve_file("prompts/shared_rules.md", workspace)
+        return resolved.read_text() if resolved else ""
 
     def _load_project_rules(self, workspace: Path) -> str:
         """Load AGENTS.md or agents.md from the workspace if present."""

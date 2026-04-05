@@ -9,6 +9,8 @@ See README.md for full usage documentation.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import sys
 import time
 from pathlib import Path
@@ -16,6 +18,7 @@ from pathlib import Path
 from src.application.prompt_builder import PromptBuilder
 from src.application.router import WorkflowRouter
 from src.application.task_service import TaskService
+from src.domain.models import HandoffStatus, TaskStatus
 from src.domain.retry_policy import RetryPolicy
 from src.infrastructure.event_log import EventLog
 from src.infrastructure.handoff_reader import HandoffReader
@@ -25,8 +28,10 @@ from src.infrastructure.task_repository import JsonTaskRepository
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-DEFAULT_WORKSPACE = Path(__file__).parent.resolve() / "workspace"
+COORDINATOR_DIR = Path(__file__).parent.resolve()
+DEFAULT_WORKSPACE = COORDINATOR_DIR / "workspace"
 DEFAULT_MAX_TURNS = 30
+DEFAULT_HANDOFF_RETRIES = 1
 SESSION_FILE = ".coordinator_sessions.json"
 EVENT_LOG_FILE = "workflow_events.jsonl"
 AGENTS_FILE = "agents.json"
@@ -37,41 +42,87 @@ _DEFAULT_AGENTS: dict = {
     "qa_engineer": {"model": None, "prompt_file": "prompts/qa_engineer.md"},
 }
 
+# Mapping from HandoffStatus to the TaskStatus the task should transition to.
+_HANDOFF_TO_TASK_STATUS: dict[HandoffStatus, TaskStatus] = {
+    HandoffStatus.CONTINUE:         TaskStatus.IN_ENGINEERING,
+    HandoffStatus.REVIEW_REQUIRED:  TaskStatus.READY_FOR_ARCHITECT_REVIEW,
+    HandoffStatus.REWORK_REQUIRED:  TaskStatus.REWORK_REQUESTED,
+    HandoffStatus.APPROVED:         TaskStatus.DONE,
+    HandoffStatus.BLOCKED:          TaskStatus.BLOCKED,
+    HandoffStatus.NEEDS_HUMAN:      TaskStatus.NEEDS_HUMAN,
+}
+
 # ── Config loading ────────────────────────────────────────────────────────────
 
-def load_agent_config(workspace: Path) -> dict:
-    """Load agents.json, falling back to built-in defaults."""
-    import json
+def load_config(workspace: Path) -> dict:
+    """Load and return the full agents.json content, or an empty dict."""
     path = workspace / AGENTS_FILE
     if path.exists():
-        data = json.loads(path.read_text())
-        return data.get("agents", data)
-    return _DEFAULT_AGENTS
+        return json.loads(path.read_text())
+    return {}
 
 
-def load_retry_policy(workspace: Path) -> RetryPolicy:
-    """Load retry_policy from agents.json if present, else use defaults."""
-    import json
-    path = workspace / AGENTS_FILE
-    if path.exists():
-        data = json.loads(path.read_text())
-        if "retry_policy" in data:
-            return RetryPolicy.from_dict(data["retry_policy"])
+def load_agent_config(config: dict) -> dict:
+    """Extract agent definitions from pre-loaded config."""
+    return config.get("agents", _DEFAULT_AGENTS) if config else dict(_DEFAULT_AGENTS)
+
+
+def load_retry_policy(config: dict) -> RetryPolicy:
+    """Extract retry policy from pre-loaded config."""
+    if config and "retry_policy" in config:
+        return RetryPolicy.from_dict(config["retry_policy"])
     return RetryPolicy()
+
+
+# ── Task status sync ─────────────────────────────────────────────────────────
+
+def _sync_task_status(
+    task_service: TaskService | None,
+    task_id: str,
+    handoff_status: HandoffStatus,
+    verbose: bool,
+) -> None:
+    """Apply the task transition implied by a handoff status, if applicable."""
+    if task_service is None:
+        return
+    target = _HANDOFF_TO_TASK_STATUS.get(handoff_status)
+    if target is None:
+        return
+    task = task_service.get(task_id)
+    if task is None or task.status == target:
+        return
+    try:
+        task_service.update_status(task_id, target)
+        if verbose:
+            print(f"  ↳ tasks.json: {task_id} → {target.value}")
+    except ValueError:
+        # Transition not valid from current state — skip silently.
+        pass
+
+
+# ── Handoff file content hash ────────────────────────────────────────────────
+
+def _file_hash(path: Path) -> str:
+    """Return a hex digest of a file's content, or empty string if missing."""
+    if not path.exists():
+        return ""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 # ── Coordinator loop ──────────────────────────────────────────────────────────
 
 def run_coordinator(workspace: Path, max_turns: int, reset: bool, verbose: bool) -> None:
-    agents = load_agent_config(workspace)
-    retry_policy = load_retry_policy(workspace)
+    config = load_config(workspace)
+    agents = load_agent_config(config)
+    retry_policy = load_retry_policy(config)
 
-    handoff_reader = HandoffReader(workspace / "handoff.md")
+    handoff_path = workspace / "handoff.md"
+    handoff_reader = HandoffReader(handoff_path)
     session_store = SessionStore(workspace / SESSION_FILE)
     event_log = EventLog(workspace / EVENT_LOG_FILE)
     runner = OpenCodeRunner(verbose=verbose)
     router = WorkflowRouter()
-    builder = PromptBuilder()
+    builder = PromptBuilder(coordinator_dir=COORDINATOR_DIR)
 
     tasks_path = workspace / "tasks.json"
     task_service = (
@@ -119,29 +170,48 @@ def run_coordinator(workspace: Path, max_turns: int, reset: bool, verbose: bool)
         if verbose:
             print(f"  {'─'*40}")
 
-        try:
-            run_result = runner.run(
-                message=prompt,
-                workspace=workspace,
-                session_id=session_store.get(agent),
-                model=agent_cfg.get("model"),
-            )
-        except RuntimeError as e:
-            print(f"\n❌  OpenCode error: {e}")
-            sys.exit(1)
+        hash_before = _file_hash(handoff_path)
+        handoff_updated = False
 
-        session_store.set(agent, run_result.session_id)
+        for attempt in range(1 + DEFAULT_HANDOFF_RETRIES):
+            try:
+                run_result = runner.run(
+                    message=prompt if attempt == 0 else _retry_prompt(agent, workspace),
+                    workspace=workspace,
+                    session_id=session_store.get(agent),
+                    model=agent_cfg.get("model"),
+                )
+            except RuntimeError as e:
+                print(f"\n❌  OpenCode error: {e}")
+                sys.exit(1)
+
+            session_store.set(agent, run_result.session_id)
+            hash_after = _file_hash(handoff_path)
+
+            if hash_after != hash_before:
+                handoff_updated = True
+                break
+
+            if attempt < DEFAULT_HANDOFF_RETRIES:
+                print(f"  ⚠  handoff.md not updated — retrying ({attempt + 1}/{DEFAULT_HANDOFF_RETRIES})")
+
         turn_counts[agent] = turn_counts.get(agent, 0) + 1
         total_turns += 1
 
+        if not handoff_updated:
+            print(f"\n⚠  WARNING: handoff.md was not updated by {agent} after retries. Check agent output.")
+            break
+
         new_message = handoff_reader.read()
-        if new_message is None or new_message == message:
-            print(f"\n⚠  WARNING: handoff.md was not updated by {agent}. Check agent output.")
+        if new_message is None:
+            print(f"\n⚠  WARNING: handoff.md has no valid block after {agent}'s turn.")
             break
 
         new_status = new_message.status.value
         new_next = new_message.next
         print(f"  ✓ handoff.md updated → status={new_status}, next={new_next}")
+
+        _sync_task_status(task_service, new_message.task_id, new_message.status, verbose)
 
         event_log.append(
             turn=total_turns,
@@ -161,6 +231,15 @@ def run_coordinator(workspace: Path, max_turns: int, reset: bool, verbose: bool)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _retry_prompt(agent: str, workspace: Path) -> str:
+    """Short, targeted prompt sent when an agent fails to update handoff.md."""
+    return (
+        f"Your previous turn did NOT append a handoff block to `{workspace}/handoff.md`. "
+        f"This is required. Please append a valid `---HANDOFF---` … `---END---` block now. "
+        f"Use the file-write tool to append to `{workspace}/handoff.md`."
+    )
+
 
 def _print_header(workspace: Path, max_turns: int, agents: dict) -> None:
     print(f"\n{'─'*60}")

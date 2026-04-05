@@ -127,6 +127,82 @@ class TestPromptBuilder(unittest.TestCase):
         )
         self.assertIn("DEVELOPER", prompt)
 
+    def test_coordinator_dir_prompt_takes_priority(self):
+        """P5: Prompt files are resolved from coordinator_dir before workspace."""
+        coord_dir = Path(tempfile.mkdtemp())
+        try:
+            coord_prompts = coord_dir / "prompts"
+            coord_prompts.mkdir()
+            (coord_prompts / "special.md").write_text("Coordinator-level prompt.")
+            (coord_prompts / "shared_rules.md").write_text("Coordinator rules.")
+
+            builder = PromptBuilder(coordinator_dir=coord_dir)
+            prompt = builder.build(
+                role="special",
+                workspace=self._workspace,
+                handoff_content="",
+                agent_cfg={"prompt_file": "prompts/special.md"},
+                first_turn=True,
+            )
+            self.assertIn("Coordinator-level prompt.", prompt)
+            self.assertIn("Coordinator rules.", prompt)
+        finally:
+            import shutil
+            shutil.rmtree(coord_dir, ignore_errors=True)
+
+    def test_workspace_prompt_used_when_no_coordinator_dir(self):
+        """P5: Falls back to workspace when coordinator_dir is None."""
+        builder = PromptBuilder(coordinator_dir=None)
+        prompt = builder.build(
+            role="architect",
+            workspace=self._workspace,
+            handoff_content="",
+            agent_cfg={"prompt_file": "prompts/architect.md"},
+            first_turn=True,
+        )
+        self.assertIn("You are the architect.", prompt)
+
+    def test_workspace_fallback_when_not_in_coordinator_dir(self):
+        """P5: If file not in coordinator_dir, falls back to workspace."""
+        coord_dir = Path(tempfile.mkdtemp())
+        try:
+            builder = PromptBuilder(coordinator_dir=coord_dir)
+            prompt = builder.build(
+                role="architect",
+                workspace=self._workspace,
+                handoff_content="",
+                agent_cfg={"prompt_file": "prompts/architect.md"},
+                first_turn=True,
+            )
+            self.assertIn("You are the architect.", prompt)
+        finally:
+            import shutil
+            shutil.rmtree(coord_dir, ignore_errors=True)
+
+    def test_project_rules_loaded_from_workspace(self):
+        """AGENTS.md in workspace is injected on first turn."""
+        (self._workspace / "AGENTS.md").write_text("Project rule: use TDD.")
+        prompt = self._builder.build(
+            role="architect",
+            workspace=self._workspace,
+            handoff_content="",
+            agent_cfg=self._cfg(),
+            first_turn=True,
+        )
+        self.assertIn("Project rule: use TDD.", prompt)
+
+    def test_project_rules_not_on_subsequent_turns(self):
+        """AGENTS.md is only injected on first turn."""
+        (self._workspace / "AGENTS.md").write_text("Project rule: use TDD.")
+        prompt = self._builder.build(
+            role="architect",
+            workspace=self._workspace,
+            handoff_content="",
+            agent_cfg=self._cfg(),
+            first_turn=False,
+        )
+        self.assertNotIn("Project rule: use TDD.", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

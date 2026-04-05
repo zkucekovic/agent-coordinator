@@ -1,11 +1,11 @@
 # Handoff Protocol
 
-This document describes the complete format and rules for the `handoff.md` communication channel used by the two-agent coordination workflow.
+This document describes the complete format and rules for the `handoff.md` communication channel used by the multi-agent coordination workflow.
 
 ## File Rules
 
 - `handoff.md` is **append-only** — entries are never edited or deleted during normal operation.
-- Each turn by architect or engineer appends one human-readable section followed by one structured `---HANDOFF---` block.
+- Each turn by any agent appends one human-readable section followed by one structured `---HANDOFF---` block.
 - The structured block is authoritative; if narrative text and the block contradict, the block governs.
 
 ## Entry Format
@@ -23,9 +23,9 @@ Each handoff entry consists of:
 
 ```
 ---HANDOFF---
-ROLE: <architect|engineer>
+ROLE: <agent-role-name>
 STATUS: <status-value>
-NEXT: <architect|engineer|human|none>
+NEXT: <agent-role-name|human|none>
 TASK_ID: <task-id>
 TITLE: <short title>
 SUMMARY: <single-line or multi-line explanation>
@@ -49,15 +49,15 @@ BLOCKERS:
 
 | Field | Type | Description |
 |---|---|---|
-| `ROLE` | scalar | Who wrote this block: `architect` or `engineer` |
+| `ROLE` | scalar | Who wrote this block (e.g. `architect`, `developer`, `qa_engineer`) |
 | `STATUS` | scalar | Current state of the work (see allowed values below) |
-| `NEXT` | scalar | Who acts next: `architect`, `engineer`, `human`, or `none` |
+| `NEXT` | scalar | Who acts next: any agent role name, `human`, or `none` |
 | `TASK_ID` | scalar | The task identifier (e.g. `task-003`) |
 | `TITLE` | scalar | Short human-readable title |
 | `SUMMARY` | scalar | What was done or decided this turn |
-| `ACCEPTANCE` | list | Acceptance criteria (with PASS/FAIL for engineer, plain for architect) |
+| `ACCEPTANCE` | list | Acceptance criteria (with PASS/FAIL for implementers, plain for architect) |
 | `CONSTRAINTS` | list | Constraints that applied this turn |
-| `FILES_TO_TOUCH` | list | Files the engineer is expected to modify |
+| `FILES_TO_TOUCH` | list | Files the implementer is expected to modify |
 | `CHANGED_FILES` | list | Files actually modified this turn |
 | `VALIDATION` | list | Validation steps run and their results |
 | `BLOCKERS` | list | Any blockers, or `none` |
@@ -71,26 +71,41 @@ List fields accept `n/a` or `none` as a no-item marker. Both are stripped from t
 | Value | Meaning |
 |---|---|
 | `continue` | Assigning a task or providing direction |
-| `approved` | Engineer output approved; task complete |
-| `rework_required` | Engineer output rejected; targeted rework requested |
+| `approved` | Agent output approved; task complete |
+| `rework_required` | Agent output rejected; targeted rework requested |
 | `blocked` | Architect cannot proceed without information |
 | `needs_human` | Escalation to the human operator required |
 | `plan_complete` | All tasks done and reviewed; workflow finished |
 
-### Engineer turn STATUS values
+### Developer turn STATUS values
 
 | Value | Meaning |
 |---|---|
 | `review_required` | Implementation done; architect review requested |
-| `blocked` | Engineer cannot proceed; escalating |
+| `blocked` | Developer cannot proceed; escalating |
 | `needs_human` | Human intervention required |
+
+### QA Engineer turn STATUS values
+
+| Value | Meaning |
+|---|---|
+| `review_required` | Validation complete, all criteria pass; architect review requested |
+| `rework_required` | Validation found failures; recommending rework to architect |
+| `blocked` | Cannot run validation (environment broken) |
+| `needs_human` | Human intervention required |
+
+### Custom agent STATUS values
+
+Custom agents should use `review_required` when their work is done, `blocked` when stuck, and `needs_human` for escalation. The architect determines the next step.
 
 ## NEXT Allowed Values
 
 | Value | Meaning |
 |---|---|
 | `architect` | Architect should act next |
-| `engineer` | Engineer should act next |
+| `developer` | Developer should act next |
+| `qa_engineer` | QA engineer should act next |
+| `<custom>` | Any custom agent defined in agents.json |
 | `human` | Human operator should act next |
 | `none` | No further automated action (used with `plan_complete`) |
 
@@ -100,16 +115,36 @@ List fields accept `n/a` or `none` as a no-item marker. Both are stripped from t
 
 - Must read the latest valid block before writing.
 - Must assign tasks one at a time (no concurrent `in_engineering` tasks).
-- Must include explicit, testable acceptance criteria for every engineering assignment.
+- Must include explicit, testable acceptance criteria for every task assignment.
 - Must not write `STATUS: plan_complete` while any task remains unfinished.
 - May write `STATUS: rework_required` to send a task back; must specify what to fix.
+- Has final authority over all decisions — can challenge or override any agent's output.
 
-### Engineer turn rules
+### Developer turn rules
 
-- Must confirm `NEXT: engineer` in the latest block before acting.
+- Must confirm `NEXT: developer` in the latest block before acting.
 - Must implement only the task identified by `TASK_ID` in the latest architect block.
 - Must populate `CHANGED_FILES` and `VALIDATION` — omitting these is a protocol violation.
 - Must set `STATUS: blocked` and `NEXT: human` if unable to proceed without guessing.
+- Must always set `NEXT: architect` — the architect decides whether to send to QA or proceed.
+
+### QA Engineer turn rules
+
+- Must confirm `NEXT: qa_engineer` in the latest block before acting.
+- Must validate against the acceptance criteria stated by the architect.
+- Must report PASS/FAIL with evidence for each criterion.
+- Must always set `NEXT: architect` — the architect makes the final call.
+- Verdict is a recommendation; the architect may accept, challenge, or override.
+
+## Standard Workflow
+
+```
+architect --> developer --> architect --> qa_engineer --> architect
+                                                            |
+                                          approve / challenge / rework
+```
+
+The architect routes work between agents. The typical flow is: architect assigns to developer, developer returns to architect, architect sends to QA, QA returns to architect, architect approves or requests rework.
 
 ## Completion Rule
 
@@ -122,7 +157,7 @@ No further automated agent turns should occur after this point.
 
 ## Blocked Rule
 
-Either agent may escalate by writing:
+Any agent may escalate by writing:
 ```
 STATUS: blocked
 NEXT: human

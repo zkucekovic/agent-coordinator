@@ -6,55 +6,49 @@ This document covers three areas: problems that need fixing, functional improvem
 
 ## 1. Problems and Fixes
 
-### P1: agents.json is read twice on startup
+All problems listed below have been fixed.
 
-`load_agent_config()` and `load_retry_policy()` each independently read and parse `agents.json`. This is a minor DRY violation now, but will compound if more config sections are added.
+### P1: agents.json is read twice on startup — FIXED
 
-**Fix**: Create a single `load_config(workspace) -> dict` function that reads the file once and returns the full dict. Have `load_agent_config` and `load_retry_policy` accept the pre-loaded dict rather than a path.
+`load_agent_config()` and `load_retry_policy()` each independently read and parse `agents.json`.
 
-### P2: Coordinator does not update tasks.json
+**Fix applied**: Created `load_config(workspace)` that reads the file once. Both `load_agent_config` and `load_retry_policy` now accept the pre-loaded dict.
 
-The coordinator reads `tasks.json` for context (next ready task) but never writes status changes back. The agents are expected to update task statuses themselves, but they have no reliable way to do so — they operate through OpenCode, which may or may not have file-write access to `tasks.json`.
+### P2: Coordinator does not update tasks.json — FIXED
 
-This means `tasks.json` drifts from reality after the first turn.
+The coordinator reads `tasks.json` for context but never writes status changes back.
 
-**Fix**: After each turn, the coordinator should read the new handoff block and apply the corresponding `TaskService` transition. For example: if a developer's block says `STATUS: review_required`, transition the task from `in_engineering` to `ready_for_architect_review`. This keeps the task registry in sync without relying on agents to manage it.
+**Fix applied**: Added `_sync_task_status()` with a `_HANDOFF_TO_TASK_STATUS` mapping table. After each turn, the coordinator maps the handoff status to a `TaskService` transition and applies it. Invalid transitions are skipped silently.
 
-### P3: Handoff equality check is fragile
+### P3: Handoff equality check is fragile — FIXED
 
-Line 138 of `coordinator.py` compares `new_message == message` to detect whether the agent updated `handoff.md`. This relies on Python dataclass `__eq__`, which compares all fields. If an agent happens to produce an identical block (same status, same summary, same everything), the coordinator would falsely conclude "not updated" and stop.
+Line 138 of `coordinator.py` compared `new_message == message` using dataclass `__eq__`.
 
-**Fix**: Compare the raw file content hash before and after the agent runs, or compare a monotonically increasing turn counter / timestamp in the handoff block.
+**Fix applied**: Replaced with SHA-256 content hash comparison (`_file_hash()`) of the raw handoff.md file before and after the agent runs.
 
-### P4: No retry when an agent fails to write handoff.md
+### P4: No retry when an agent fails to write handoff.md — FIXED
 
-If an agent produces output but does not append a handoff block to the file (observed in integration tests with LLMs), the coordinator just warns and breaks. There is no retry attempt.
+If an agent produced output but did not append a handoff block, the coordinator just warned and broke.
 
-**Fix**: Add a configurable retry (1-2 attempts) where the coordinator re-sends a targeted "you must append a handoff block" message if the file was not updated after a turn.
+**Fix applied**: Added a configurable retry loop (`DEFAULT_HANDOFF_RETRIES = 1`) that re-sends a targeted "you must append a handoff block" prompt via `_retry_prompt()`.
 
-### P5: Prompt path resolution is confusing
+### P5: Prompt path resolution is confusing — FIXED
 
-`PromptBuilder._load_role_prompt()` resolves `prompt_file` relative to the workspace path. But the default `agents.json` uses paths like `prompts/architect.md`, which exist relative to the coordinator's own directory, not the user's project workspace.
+`PromptBuilder` resolved `prompt_file` relative to the workspace path, causing prompts to be silently ignored when pointing at a real project workspace.
 
-When pointing at a real project workspace, the coordinator looks for prompts inside that project directory. If they are not there, it falls back to a generic one-liner. The user's actual prompt files (in the coordinator repo's `prompts/` directory) are silently ignored.
+**Fix applied**: `PromptBuilder` now accepts `coordinator_dir` and resolves prompt files relative to the coordinator's install directory first, falling back to the workspace. The coordinator passes `COORDINATOR_DIR` to the builder.
 
-**Fix**: Resolve prompt paths relative to the coordinator's installation directory by default. Allow `agents.json` to override with absolute paths or workspace-relative paths using a clear prefix convention (e.g. `workspace:prompts/custom.md` vs `prompts/architect.md`).
+### P6: docs/protocol.md and docs/workflow.md are outdated — FIXED
 
-### P6: docs/protocol.md and docs/workflow.md are outdated
+Both documents referenced a two-agent (architect + engineer) workflow.
 
-Both documents still reference a two-agent (architect + engineer) workflow. The system now supports three agents (architect, developer, qa_engineer) with arbitrary extension. Specific issues:
-- `protocol.md` says `ROLE: <architect|engineer>`, `NEXT: <architect|engineer|human|none>`
-- `workflow.md` describes a "two-agent coordination loop" and references "Engineer" throughout
-- `workflow.md` references `TaskStore.update_status()` instead of `TaskService`
-- The workflow diagram shows architect-engineer only
+**Fix applied**: Rewrote both documents to reflect the three-agent setup (architect, developer, qa_engineer), the extensible agent model, automatic task status sync, and handoff write retry.
 
-**Fix**: Update both documents to reflect the current three-agent setup and the extensible agent model.
+### P7: Backwards-compat shims reference outdated API — FIXED
 
-### P7: Backwards-compat shims reference outdated API
+Code examples in `docs/workflow.md` showed enum returns (`NextActor.ENGINEER`).
 
-`src/workflow.py` exports `get_next_actor()` which returns `message.next` — but the return type documentation in `docs/workflow.md` shows `NextActor.ENGINEER` (an enum). The actual return is a plain string now. Minor, but misleading to anyone reading the docs.
-
-**Fix**: Update the code example in `docs/workflow.md` to show string returns.
+**Fix applied**: Updated all code examples to show string returns (`"developer"`).
 
 ---
 
