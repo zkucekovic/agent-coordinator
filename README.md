@@ -1,104 +1,46 @@
 # Agent Coordinator
 
-A tool-agnostic protocol and coordinator for multi-agent AI workflows. Agents communicate through structured, append-only handoff files. The coordinator drives the loop — routing turns, enforcing task lifecycle rules, logging events — while remaining independent of any specific AI backend.
+Run multi-agent AI workflows across any combination of tools. Define roles, set authority rules, and let the coordinator drive the loop while you watch or step in when needed.
 
-Works with OpenCode, Claude Code, or a human operator. Mix backends freely: use Claude for architecture, OpenCode for implementation, and a human for final review — all in the same workflow.
+The coordinator is backend-agnostic. It works with OpenCode, Claude Code, a human at the terminal, or all three in the same workflow. The agents don't know about each other — they communicate through a shared, append-only text file (`handoff.md`) using a structured protocol that any tool can read and write.
 
-## Why this exists
+## The problem
 
-Most multi-agent systems are locked to a single provider. This project separates the **workflow protocol** (how agents communicate and hand off work) from the **execution backend** (what runs the agents). The protocol is the product:
+You want multiple AI agents working together on a codebase — one to plan, one to code, one to review. Current options lock you into a single provider's ecosystem, give you no visibility into what's happening between agents, and offer no way to intervene mid-workflow.
 
-- A structured, append-only `handoff.md` file that any tool can read and write
-- A task lifecycle state machine with validated transitions
-- An authority hierarchy where the architect has final say
-- A full audit trail in `workflow_events.jsonl`
+This project takes a different approach: the coordination protocol is just text files. The coordinator is a thin loop that reads the protocol and dispatches to whichever backend each agent is configured to use. You can read the full conversation history in `handoff.md`, inspect task state in `tasks.json`, and audit every turn in `workflow_events.jsonl`.
 
-The coordinator is a thin loop that reads the protocol and dispatches to whichever backend each agent is configured to use.
-
-## Supported backends
-
-| Backend | CLI | Config value | Status |
-|---|---|---|---|
-| OpenCode | `opencode run` | `"opencode"` | Tested |
-| Claude Code | `claude --print` | `"claude"` | Implemented |
-| Manual (human) | stdin prompt | `"manual"` | Implemented |
-
-Each agent can use a different backend. Set it per-agent in `agents.json`:
-
-```json
-{
-  "default_backend": "opencode",
-  "agents": {
-    "architect": { "backend": "opencode", "model": "claude-sonnet-4" },
-    "developer": { "backend": "claude" },
-    "qa_engineer": { "backend": "manual" }
-  }
-}
-```
-
-## How it works
-
-Each agent turn follows the same pattern regardless of backend:
-
-1. The coordinator reads `handoff.md` and identifies whose turn it is (`NEXT:` field)
-2. It builds a prompt from the agent's role prompt, shared rules, project `AGENTS.md`, and task context
-3. It dispatches to the configured backend (OpenCode, Claude, or human)
-4. It waits for the agent to append a new structured block to `handoff.md`
-5. It reads the new `NEXT:` field and routes to the appropriate agent
-6. It automatically syncs task status in `tasks.json`
-7. It stops when `STATUS: plan_complete`, `NEXT: human`, or a blocked state is reached
-
-If an agent fails to update `handoff.md`, the coordinator retries with a targeted reminder before giving up.
-
-## Default agents
-
-The default configuration ships with three agents:
-
-**Architect** — plans the work, assigns tasks, reviews all output, and has final authority over every decision. Can override QA verdicts, challenge results, and request rework from any agent.
-
-**Developer** — implements assigned tasks, runs validation, reports results. Returns to the architect; never skips review.
-
-**QA Engineer** — validates developer work against acceptance criteria. Reports pass/fail with evidence. Returns to the architect, who makes the final call.
-
-```
-architect --> developer --> qa_engineer --> architect
-                                              |
-                            approve / challenge / rework
-```
-
-## Requirements
-
-- Python 3.10+
-- At least one backend CLI installed and authenticated (opencode, claude, or neither for manual-only)
-- No third-party Python packages — standard library only
-
-## Getting started
+## Quick start
 
 ```bash
 git clone https://github.com/zkucekovic/agent-coordinator.git
 cd agent-coordinator
 
-# Run with the included example workspace (uses opencode by default)
-python3 coordinator.py
+# Run with OpenCode (default)
+python3 coordinator.py --workspace /path/to/your/project
 
-# Or point at your own project
-python3 coordinator.py --workspace /path/to/your/project --max-turns 20
+# Or with Claude Code
+# (set default_backend in agents.json to "claude")
+python3 coordinator.py --workspace /path/to/your/project
+
+# Or run fully manual to see what prompts get generated
+# (set default_backend to "manual")
+python3 coordinator.py --workspace /path/to/your/project
 ```
 
-### Options
+Requirements: Python 3.10+, no third-party packages. Install whichever backend CLI you want to use ([opencode](https://opencode.ai), [claude](https://docs.anthropic.com/en/docs/claude-code)).
 
-| Flag | Default | Description |
-|---|---|---|
-| `--workspace PATH` | `workspace/` | Directory containing `handoff.md` and optionally `tasks.json` |
-| `--max-turns N` | 30 | Maximum agent turns before stopping |
-| `--reset` | false | Clear saved session IDs and start fresh |
-| `--quiet` | false | Suppress per-turn output |
+## Example: building a feature with three agents
 
-## Setting up a new project workspace
+This is the default workflow. An architect plans the work, a developer implements it, and a QA engineer validates it. The architect has final authority — it can override QA, challenge results, or request rework from anyone.
 
-A workspace is a directory with a `handoff.md` file. Everything else is optional.
+**Step 1: Set up the workspace**
 
-### 1. Initialize handoff.md
+Create a directory with a `handoff.md` that describes the initial task:
+
+```bash
+mkdir my-feature && cd my-feature
+```
 
 ```
 ---HANDOFF---
@@ -106,12 +48,16 @@ ROLE: architect
 STATUS: continue
 NEXT: architect
 TASK_ID: task-000
-TITLE: Initialize plan
-SUMMARY: Review the project brief and assign the first task.
+TITLE: Build user authentication
+SUMMARY: Implement JWT-based auth with login, logout, and token refresh endpoints.
 ACCEPTANCE:
-- first task is clearly defined with acceptance criteria
+- login endpoint returns a signed JWT
+- logout invalidates the token
+- token refresh issues a new JWT before expiry
+- all endpoints have tests
 CONSTRAINTS:
-- none
+- use existing database models
+- no new dependencies
 FILES_TO_TOUCH:
 - handoff.md
 CHANGED_FILES:
@@ -123,7 +69,150 @@ BLOCKERS:
 ---END---
 ```
 
-### 2. Optionally create agents.json
+**Step 2: Run the coordinator**
+
+```bash
+python3 coordinator.py --workspace ./my-feature --max-turns 20
+```
+
+What happens next, automatically:
+
+1. The architect reads the handoff, breaks the work into a concrete task with acceptance criteria, and hands off to the developer
+2. The developer implements the task and hands off to the architect
+3. The architect routes to QA for validation
+4. QA runs tests, checks acceptance criteria, and reports back to the architect
+5. The architect reviews QA's verdict — approves, requests rework, or challenges QA
+6. The loop continues until the architect declares `plan_complete`
+
+Each turn is logged in `workflow_events.jsonl`. Task status in `tasks.json` is updated automatically.
+
+## Example: mixed backends
+
+Use Claude for high-level planning, OpenCode for implementation, and yourself for final review:
+
+```json
+{
+  "default_backend": "opencode",
+  "retry_policy": { "max_rework": 3, "on_exceed": "needs_human" },
+  "agents": {
+    "architect": {
+      "backend": "claude",
+      "model": "claude-sonnet-4",
+      "prompt_file": "prompts/architect.md"
+    },
+    "developer": {
+      "backend": "opencode",
+      "model": null,
+      "prompt_file": "prompts/developer.md"
+    },
+    "qa_engineer": {
+      "backend": "manual",
+      "model": null,
+      "prompt_file": "prompts/qa_engineer.md"
+    }
+  }
+}
+```
+
+When it's the QA engineer's turn, the coordinator prints the prompt to your terminal and waits for you to press Enter after you've reviewed the work and appended your handoff block to `handoff.md`.
+
+## Example: adding a security reviewer
+
+No code changes needed. Create a prompt file, add the agent to config, and update existing prompts to route to it.
+
+**1. Create `prompts/security_reviewer.md`** (use `prompts/agent_template.md` as a starting point):
+
+```markdown
+# Security Reviewer Agent
+
+You are the **Security Reviewer** in a multi-agent workflow.
+
+## Your Responsibilities
+- Review code changes for security vulnerabilities
+- Check for hardcoded secrets, SQL injection, XSS, CSRF
+- Verify authentication and authorization logic
+- Report findings with severity levels
+
+## Rules
+- Do not modify code — review only
+- NEXT is always `architect`
+- Be specific: name the file, line, and vulnerability type
+```
+
+**2. Add to `agents.json`:**
+
+```json
+"security_reviewer": {
+  "backend": "claude",
+  "model": null,
+  "prompt_file": "prompts/security_reviewer.md"
+}
+```
+
+**3. Update `prompts/architect.md`** to include `security_reviewer` as a routing option:
+
+```
+| Developer work involves auth/crypto | STATUS: continue, NEXT: security_reviewer |
+```
+
+The coordinator routes dynamically based on the `NEXT:` field in handoff blocks. Any agent name that exists in `agents.json` is a valid routing target.
+
+## How the protocol works
+
+Agents communicate through `handoff.md`, a plain text file with structured blocks:
+
+```
+---HANDOFF---
+ROLE: developer
+STATUS: review_required
+NEXT: architect
+TASK_ID: task-001
+TITLE: Implement login endpoint
+SUMMARY: Added POST /auth/login with JWT signing. Used existing User model.
+ACCEPTANCE:
+- login endpoint returns a signed JWT — PASS
+- input validation on email/password — PASS
+CONSTRAINTS:
+- used existing database models — followed
+CHANGED_FILES:
+- src/auth/login.py
+- tests/test_login.py
+VALIDATION:
+- python3 -m pytest tests/test_login.py -- 6 passed
+BLOCKERS:
+- none
+---END---
+```
+
+The file is append-only. Each agent reads the latest block, does its work, and appends a new block. The coordinator reads `NEXT:` to know who goes next and `STATUS:` to know whether to continue, stop, or retry.
+
+### Status values
+
+| Status | Meaning |
+|---|---|
+| `continue` | Normal progression, hand off to the next agent |
+| `review_required` | Work is done, needs review by the architect |
+| `rework_required` | Work needs changes, goes back to developer |
+| `approved` | Architect approves the work |
+| `blocked` | Cannot proceed, needs intervention |
+| `needs_human` | Escalate to human operator |
+| `plan_complete` | All work is done, workflow ends |
+
+### Task lifecycle
+
+If you use `tasks.json`, the coordinator automatically syncs task status based on handoff events:
+
+```
+planned → ready_for_engineering → in_engineering → ready_for_architect_review
+                                        ↑                       ↓
+                                  rework_requested ←──── (architect decides)
+                                                                ↓
+                                                              done
+```
+
+## Configuration reference
+
+### agents.json
 
 ```json
 {
@@ -133,158 +222,106 @@ BLOCKERS:
     "on_exceed": "needs_human"
   },
   "agents": {
-    "architect": {
-      "backend": "opencode",
-      "model": null,
-      "prompt_file": "prompts/architect.md"
-    },
-    "developer": {
-      "backend": "opencode",
-      "model": null,
-      "prompt_file": "prompts/developer.md"
-    },
-    "qa_engineer": {
-      "backend": "opencode",
-      "model": null,
-      "prompt_file": "prompts/qa_engineer.md"
+    "agent_name": {
+      "backend": "opencode | claude | manual",
+      "model": "model-name or null",
+      "prompt_file": "prompts/agent_name.md"
     }
   }
 }
 ```
 
-### 3. Optionally create tasks.json
+- `default_backend`: used when an agent doesn't specify its own backend
+- `retry_policy.max_rework`: how many rework cycles before escalating
+- `retry_policy.on_exceed`: what happens when max rework is exceeded (`needs_human` or `blocked`)
 
-```json
-{
-  "tasks": [
-    { "id": "task-001", "title": "Implement login endpoint", "status": "planned" }
-  ]
-}
-```
+### CLI options
 
-The coordinator auto-syncs task status based on handoff events. Valid states: `planned`, `ready_for_engineering`, `in_engineering`, `ready_for_architect_review`, `rework_requested`, `done`, `blocked`, `needs_human`.
+| Flag | Default | Description |
+|---|---|---|
+| `--workspace PATH` | `workspace/` | Directory with `handoff.md` and project files |
+| `--max-turns N` | 30 | Maximum agent turns before stopping |
+| `--reset` | false | Clear saved session IDs and start fresh |
+| `--quiet` | false | Suppress per-turn output |
 
-### 4. Run the coordinator
+### Session persistence
 
-```bash
-python3 coordinator.py --workspace /path/to/your/project
-```
+Each agent's session ID is saved in `<workspace>/.coordinator_sessions.json`. Re-running the coordinator resumes conversations with full context. Use `--reset` to start fresh.
 
-## Adding agents
+## AGENTS.md integration
 
-To add an agent (e.g. a security reviewer):
+If your project has an `AGENTS.md` (or `agents.md`) file, the coordinator automatically includes it in agent prompts on their first turn. Your existing coding standards, architecture rules, and testing requirements are enforced without duplicating them into coordinator prompt files.
 
-1. Create `prompts/security_reviewer.md` — use `prompts/agent_template.md` as a starting point
-2. Add the agent to `agents.json` with its backend and model
-3. In the relevant prompt files, include `security_reviewer` as a possible `NEXT:` value
-
-The coordinator routes dynamically based on the `NEXT:` field — no code changes required.
+Injection order: role instructions > project rules (AGENTS.md) > shared protocol rules.
 
 ## Adding a new backend
 
-Implement the `AgentRunner` interface in `src/application/runner.py`:
+Implement the `AgentRunner` interface:
 
 ```python
 from src.application.runner import AgentRunner
 from src.domain.models import RunResult
 
-class MyCustomRunner(AgentRunner):
+class MyRunner(AgentRunner):
     def run(self, message, workspace, session_id=None, model=None) -> RunResult:
-        # Call your backend, return RunResult(session_id="...", text="...")
-        ...
+        # Dispatch to your tool, return the response
+        response = call_my_tool(message)
+        return RunResult(session_id="some-id", text=response)
 ```
 
-Register it in the runner factory in `coordinator.py` and use it in `agents.json` with `"backend": "my_custom"`.
-
-## Using your project's AGENTS.md
-
-If an `AGENTS.md` or `agents.md` file exists in the workspace, the coordinator automatically injects it into agent prompts on their first turn. This means your existing coding standards, architecture rules, and testing requirements are enforced without duplication.
-
-The injection order: agent role instructions > project rules (AGENTS.md) > shared protocol rules (shared_rules.md).
-
-## Handoff block format
-
-Every agent turn must end with a structured block:
-
-```
----HANDOFF---
-ROLE: architect | developer | qa_engineer | <custom>
-STATUS: continue | approved | rework_required | review_required | blocked | needs_human | plan_complete
-NEXT: architect | developer | qa_engineer | <custom> | human | none
-TASK_ID: task-001
-TITLE: Short label
-SUMMARY: What was done or decided this turn.
-ACCEPTANCE:
-- criterion
-CONSTRAINTS:
-- constraint
-FILES_TO_TOUCH:
-- src/example.py
-CHANGED_FILES:
-- src/example.py
-VALIDATION:
-- python3 -m pytest tests/ -- 42 passed
-BLOCKERS:
-- none
----END---
-```
-
-`handoff.md` is append-only. Agents read the latest block and append their response.
+Register it in the runner factory in `coordinator.py` and reference it in `agents.json` as `"backend": "my_runner"`.
 
 ## Human intervention
 
-The workflow stops when any block contains `NEXT: human`. To resume:
+The workflow pauses when `NEXT: human` appears. To resume:
 
-1. Read the latest block to understand why it stopped
-2. Resolve the issue
-3. Append a new block with the correct `NEXT:` value
+1. Read the latest block in `handoff.md` to see why it stopped
+2. Fix the issue or answer the question
+3. Append a new handoff block with `NEXT:` pointing to the right agent
 4. Re-run the coordinator
 
-You can also set an agent's backend to `"manual"` — the coordinator will pause and prompt the human operator directly.
+You can also intervene proactively by appending a block before the next turn runs.
+
+## Retry behavior
+
+When an agent's response doesn't update `handoff.md` (common with LLMs that output the block in chat but don't write it to the file), the coordinator automatically retries with a targeted reminder. If a task exceeds `max_rework` cycles, the coordinator escalates based on the `on_exceed` policy.
 
 ## Running tests
 
 ```bash
-# Unit tests (188 tests, no external dependencies)
+# Unit tests (188 tests, no API calls, no dependencies)
 python3 -m unittest discover tests/ -v
 
-# Integration tests (real backend sessions, uses API tokens)
+# Integration tests (runs real agent sessions, uses API tokens)
 RUN_INTEGRATION_TESTS=1 python3 -m unittest discover tests/integration/ -v
 ```
 
 ## Project structure
 
 ```
-coordinator.py          entry point and runner factory
-agents.json             agent and backend configuration
+coordinator.py            entry point and orchestration loop
+agents.json               agent roles, backends, and retry policy
 prompts/
-  architect.md          architect system prompt (final authority)
-  developer.md          developer system prompt
-  qa_engineer.md        QA engineer system prompt
-  shared_rules.md       rules all agents must follow
-  agent_template.md     template for new agent types
-docs/
-  ANALYSIS.md           codebase analysis and improvement notes
-  protocol.md           handoff block specification
-  workflow.md           workflow loop and task lifecycle
-scripts/
-  parse_next.sh         shell utility: extract NEXT field from handoff.md
+  architect.md            architect prompt (final authority over all decisions)
+  developer.md            developer prompt
+  qa_engineer.md          QA engineer prompt
+  shared_rules.md         protocol rules all agents follow
+  agent_template.md       starting point for new agent types
 src/
-  domain/               models, lifecycle rules, retry policy
-  application/          task service, router, prompt builder, runner interface
-  infrastructure/       file I/O, backend runners (opencode, claude, manual), event log
+  domain/                 models, task lifecycle, retry policy
+  application/            task service, router, prompt builder, runner interface
+  infrastructure/         backend runners (opencode, claude, manual), file I/O, event log
 tests/
-  integration/          live backend tests (RUN_INTEGRATION_TESTS=1)
-  test_*.py             unit tests (188 tests)
-workspace/
-  handoff.md            example handoff log
-  tasks.json            example task registry
-  plan.md               example plan
+  test_*.py               unit tests
+  integration/            live backend tests
+docs/
+  protocol.md             handoff block specification
+  workflow.md             workflow loop and task lifecycle details
+workspace/                example workspace with sample handoff and tasks
 ```
 
 ## Further reading
 
-- `docs/protocol.md` — complete handoff block specification and turn rules
-- `docs/workflow.md` — full workflow loop, task lifecycle, and session instructions
-- `docs/ANALYSIS.md` — codebase analysis, known issues, and improvement ideas
-- `prompts/shared_rules.md` — the shared rules all agents must follow
+- [docs/protocol.md](docs/protocol.md) — handoff block specification and parsing rules
+- [docs/workflow.md](docs/workflow.md) — coordinator loop, task lifecycle, and session management
+- [prompts/shared_rules.md](prompts/shared_rules.md) — the 10 rules all agents must follow
