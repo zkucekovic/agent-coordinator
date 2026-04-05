@@ -1,0 +1,120 @@
+{
+  "tasks": [
+    {
+      "id": "task-001",
+      "title": "Initialize repository structure",
+      "status": "done",
+      "acceptance_criteria": [
+        "Directory tree matches spec exactly: prompts/, docs/, src/, tests/ all exist",
+        "src/__init__.py and tests/__init__.py are present (empty or minimal)",
+        "README.md exists with project title and one-line description",
+        "prompts/architect.md, prompts/engineer.md, prompts/shared_rules.md exist as placeholders",
+        "docs/protocol.md and docs/workflow.md exist as placeholders",
+        "src/handoff_parser.py, src/task_store.py, src/models.py exist as placeholder stubs",
+        "tests/test_handoff_parser.py and tests/test_task_state.py exist as placeholder stubs",
+        "No production logic implemented \u2014 placeholders only",
+        "All files are syntactically valid Python (import-safe stubs) or valid Markdown"
+      ]
+    },
+    {
+      "id": "task-002",
+      "title": "Define workflow models and enums",
+      "status": "done",
+      "acceptance_criteria": [
+        "TaskStatus enum defined with values: planned, in_engineering, review, approved, rework, complete",
+        "AgentRole enum defined with values: architect, engineer, human",
+        "Task dataclass defined with fields: id, title, status, acceptance_criteria, constraints, files_to_touch, changed_files, validation, blockers",
+        "HandoffMessage dataclass defined with all handoff block fields plus timestamp",
+        "ValidationResult dataclass defined with: valid (bool), errors (list[str])",
+        "All models importable from src.models",
+        "Models include __repr__ and equality support via dataclass defaults"
+      ]
+    },
+    {
+      "id": "task-003",
+      "title": "Implement handoff parser",
+      "status": "done",
+      "acceptance_criteria": [
+        "parse_handoff_file(path) reads a file and returns list[HandoffMessage]",
+        "get_latest_valid_block(path) returns the last valid HandoffMessage or None",
+        "validate_block(raw_text) returns a ValidationResult with errors for missing required fields",
+        "Malformed blocks (missing ---END--- or required fields) are rejected with descriptive errors",
+        "Parser is importable from src.handoff_parser"
+      ]
+    },
+    {
+      "id": "task-004",
+      "title": "Implement task store",
+      "status": "done",
+      "acceptance_criteria": [
+        "TaskStore class implemented in src/task_store.py",
+        "load(path) reads tasks.json and populates internal store",
+        "save(path) persists current state to tasks.json",
+        "get(task_id) returns Task or raises KeyError",
+        "update_status(task_id, new_status) persists status change",
+        "list_tasks() returns all tasks",
+        "All operations are idempotent for same-status updates"
+      ]
+    },
+    {
+      "id": "task-005",
+      "title": "Implement task lifecycle rules",
+      "status": "done",
+      "acceptance_criteria": [
+        "VALID_TRANSITIONS map defined: planned\u2192in_engineering, in_engineering\u2192review, review\u2192approved, review\u2192rework, rework\u2192in_engineering, approved\u2192complete",
+        "update_status raises ValueError for invalid transitions with message naming both states",
+        "At most one task may be in in_engineering state at a time; attempting a second raises ValueError",
+        "Lifecycle rules enforced inside TaskStore.update_status"
+      ]
+    },
+    {
+      "id": "task-006",
+      "title": "Add workflow helper logic",
+      "status": "done",
+      "acceptance_criteria": [
+        "derive_next_actor(message: HandoffMessage) -> AgentRole implemented",
+        "is_completion_guard_met(tasks: list[Task]) -> bool returns True only when all tasks have status complete",
+        "needs_human_escalation(message: HandoffMessage) -> bool returns True when NEXT==human or STATUS==needs_human",
+        "Helpers importable from src.workflow or src.handoff_parser",
+        "Each helper has a docstring explaining its contract"
+      ]
+    },
+    {
+      "id": "task-007",
+      "title": "Write tests",
+      "status": "done",
+      "acceptance_criteria": [
+        "test_handoff_parser.py covers: valid block parse, malformed block rejection, missing required field, multi-block file with mixed valid/invalid, get_latest_valid_block",
+        "test_task_state.py covers: all valid transition paths, invalid transition raises ValueError, in_engineering concurrency guard, load/save round-trip",
+        "An end-to-end test parses a handoff, updates task store, derives next actor",
+        "All tests pass with: python -m pytest tests/",
+        "No external test dependencies beyond pytest"
+      ]
+    },
+    {
+      "id": "task-008",
+      "title": "Finalize documentation",
+      "status": "done",
+      "acceptance_criteria": [
+        "README.md contains: project title, description, setup instructions, usage examples, file layout",
+        "docs/protocol.md documents the full handoff block format with field definitions and allowed values",
+        "docs/workflow.md describes the agent workflow with phase descriptions and state transitions",
+        "prompts/architect.md contains the architect role prompt usable as a system prompt",
+        "prompts/engineer.md contains the engineer role prompt usable as a system prompt",
+        "prompts/shared_rules.md contains the session rules shared by both agents"
+      ]
+    },
+    {
+      "id": "task-009",
+      "title": "Final review and completion",
+      "status": "done",
+      "acceptance_criteria": [
+        "Architect has reviewed all deliverables against their acceptance criteria",
+        "All tests pass",
+        "File layout matches spec exactly",
+        "handoff.md integrity check: all blocks are well-formed, append-only invariant holds",
+        "Architect appends STATUS: plan_complete block to declare completion"
+      ]
+    }
+  ]
+}
