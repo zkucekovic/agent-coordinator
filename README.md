@@ -320,6 +320,24 @@ docs/
 workspace/                example workspace with sample handoff and tasks
 ```
 
+## How this relates to Google's A2A protocol
+
+Google's [Agent-to-Agent (A2A) protocol](https://github.com/a2aproject/A2A) and this project solve different problems at different layers.
+
+A2A is an inter-service protocol. It uses HTTP, gRPC, and Server-Sent Events to connect agents across networks and organizations. Agents discover each other at runtime through Agent Cards (JSON endpoints), authenticate via enterprise security schemes, and exchange structured JSON-RPC messages. It's designed for distributed systems where Agent A at Company X needs to talk to Agent B at Company Y.
+
+Agent Coordinator is a local workflow protocol. It coordinates multiple AI coding agents working on the same codebase on one machine. There is no network layer, no service discovery, no authentication. Agents communicate through a shared file on disk (`handoff.md`), and the coordinator dispatches to local CLI tools. It's designed for a developer who wants an architect to plan, a developer to code, and a QA engineer to review — all running on their laptop.
+
+| | A2A | Agent Coordinator |
+|---|---|---|
+| Scope | Cross-network, cross-organization | Single machine, single codebase |
+| Transport | HTTP/gRPC/SSE | Shared files on disk |
+| Discovery | Agent Cards (JSON endpoints) | `agents.json` config file |
+| Dependencies | Enterprise-grade (auth, TLS, streaming) | Zero — stdlib Python only |
+| Use case | Distributed agent services | Local multi-agent dev workflows |
+
+The two are complementary. A2A defines how agents talk across boundaries. Agent Coordinator defines how agents collaborate on a shared task locally. An Agent Coordinator backend could be an A2A client — dispatching turns to a remote A2A-compliant agent instead of a local CLI. The `AgentRunner` interface already supports this: implement `run()` to call an A2A endpoint, register it as a backend, and remote agents participate in the same local workflow alongside local ones.
+
 ## Further reading
 
 - [docs/protocol.md](docs/protocol.md) — handoff block specification and parsing rules
