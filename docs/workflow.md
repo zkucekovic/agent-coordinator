@@ -25,7 +25,7 @@ Architect ──assigns──▶ Engineer ──review_required──▶ Archite
 
 3. **Architect assigns a task** — selects the next unstarted task, writes a human-readable section, then appends a `---HANDOFF---` block with `STATUS: continue`, `NEXT: engineer`, and explicit acceptance criteria.
 
-4. **Human starts an engineer session** — provides `prompts/engineer.md`, `prompts/shared_rules.md`, and the full contents of `handoff.md`.
+4. **Human starts an engineer session** — provides `prompts/developer.md`, `prompts/shared_rules.md`, and the full contents of `handoff.md`.
 
 5. **Engineer reads the assignment** — confirms `NEXT: engineer` in the latest block, reads the `TASK_ID`, acceptance criteria, constraints, and `FILES_TO_TOUCH`.
 
@@ -95,7 +95,7 @@ The architect reads the file, decides what to do, and appends its block.
 ### Engineer session
 
 ```
-System prompt: contents of prompts/engineer.md
+System prompt: contents of prompts/developer.md
 User message:  contents of prompts/shared_rules.md + full handoff.md
 ```
 

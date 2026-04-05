@@ -119,13 +119,13 @@ class TestPromptBuilder(unittest.TestCase):
 
     def test_role_name_in_prompt(self):
         prompt = self._builder.build(
-            role="engineer",
+            role="developer",
             workspace=self._workspace,
             handoff_content="",
-            agent_cfg={"prompt_file": "prompts/engineer.md"},
+            agent_cfg={"prompt_file": "prompts/developer.md"},
             first_turn=True,
         )
-        self.assertIn("ENGINEER", prompt)
+        self.assertIn("DEVELOPER", prompt)
 
 
 if __name__ == "__main__":

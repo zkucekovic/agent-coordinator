@@ -95,7 +95,7 @@ You implement tasks assigned by the architect.
 
 ```
 ---HANDOFF---
-ROLE: engineer
+ROLE: developer
 STATUS: review_required
 NEXT: architect
 TASK_ID: int-001
@@ -148,9 +148,9 @@ _AGENTS_JSON = {
             "model": None,
             "prompt_file": "prompts/architect.md",
         },
-        "engineer": {
+        "developer": {
             "model": None,
-            "prompt_file": "prompts/engineer.md",
+            "prompt_file": "prompts/developer.md",
         },
     }
 }
@@ -167,7 +167,7 @@ def _build_workspace() -> Path:
     (workspace / "agents.json").write_text(json.dumps(_AGENTS_JSON, indent=2))
     (prompts / "shared_rules.md").write_text(_SHARED_RULES)
     (prompts / "architect.md").write_text(_ARCHITECT_PROMPT)
-    (prompts / "engineer.md").write_text(_ENGINEER_PROMPT)
+    (prompts / "developer.md").write_text(_ENGINEER_PROMPT)
 
     return workspace
 
@@ -209,12 +209,12 @@ class TestCoordinatorSingleEngineerTurn(unittest.TestCase):
         self.assertEqual(blocks_after, 2, "Engineer must append exactly one block")
 
     def test_engineer_block_has_correct_role(self):
-        """The appended block must have ROLE: engineer."""
+        """The appended block must have ROLE: developer."""
         self._run(max_turns=1)
         reader = HandoffReader(self._workspace / "handoff.md")
         msg = reader.read()
         self.assertIsNotNone(msg, "HandoffReader must parse the latest block")
-        self.assertEqual(msg.role, "engineer")
+        self.assertEqual(msg.role, "developer")
 
     def test_engineer_block_has_valid_status(self):
         """The engineer block must carry a recognised status value."""
@@ -239,7 +239,7 @@ class TestCoordinatorSingleEngineerTurn(unittest.TestCase):
         entries = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
         self.assertEqual(len(entries), 1, "Expected exactly one event log entry")
         entry = entries[0]
-        self.assertEqual(entry["agent"], "engineer")
+        self.assertEqual(entry["agent"], "developer")
         self.assertEqual(entry["turn"], 1)
 
     def test_session_file_created(self):
@@ -248,8 +248,8 @@ class TestCoordinatorSingleEngineerTurn(unittest.TestCase):
         session_file = self._workspace / ".coordinator_sessions.json"
         self.assertTrue(session_file.exists(), "Session file must be created")
         data = json.loads(session_file.read_text())
-        self.assertIn("engineer", data, "Session file must contain 'engineer' key")
-        self.assertTrue(len(data["engineer"]) > 0)
+        self.assertIn("developer", data, "Session file must contain 'engineer' key")
+        self.assertTrue(len(data["developer"]) > 0)
 
     def test_int_test_result_file_created(self):
         """The engineer must have created int_test_result.txt in the workspace."""
@@ -317,7 +317,7 @@ class TestCoordinatorTwoTurnCycle(unittest.TestCase):
         log_path = self._workspace / "workflow_events.jsonl"
         entries = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
         self.assertGreaterEqual(len(entries), 1, "Expected at least one event log entry")
-        self.assertEqual(entries[0]["agent"], "engineer")
+        self.assertEqual(entries[0]["agent"], "developer")
 
     def test_second_event_is_architect_turn(self):
         """The second event log entry should record the architect's turn.
@@ -355,9 +355,9 @@ class TestCoordinatorTwoTurnCycle(unittest.TestCase):
         session_file = self._workspace / ".coordinator_sessions.json"
         self.assertTrue(session_file.exists())
         data = json.loads(session_file.read_text())
-        self.assertIn("engineer", data)
+        self.assertIn("developer", data)
         self.assertIn("architect", data)
-        self.assertTrue(len(data["engineer"]) > 0)
+        self.assertTrue(len(data["developer"]) > 0)
         self.assertTrue(len(data["architect"]) > 0)
 
     def test_final_architect_block_has_valid_status(self):

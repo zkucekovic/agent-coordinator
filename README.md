@@ -20,7 +20,8 @@ coordination/
   tasks.json            ← task registry with lifecycle status
   prompts/
     architect.md        ← paste this into your architect agent session
-    engineer.md         ← paste this into your engineer agent session
+    developer.md        ← paste this into your developer agent session
+    qa_engineer.md      ← paste this into your QA engineer agent session
     shared_rules.md     ← rules both agents must follow
   docs/
     protocol.md         ← handoff block format specification
@@ -232,7 +233,7 @@ The architect will append a task assignment to `handoff.md`.
 
 ### 4. Start the Engineer Session (Manual only)
 
-Copy the contents of `prompts/engineer.md` and `prompts/shared_rules.md` into your engineer agent. Give it:
+Copy the contents of `prompts/developer.md` (or `prompts/qa_engineer.md`) and `prompts/shared_rules.md` into the relevant agent session. Give it:
 
 - the current `handoff.md`
 - access to the project workspace

@@ -32,8 +32,9 @@ EVENT_LOG_FILE = "workflow_events.jsonl"
 AGENTS_FILE = "agents.json"
 
 _DEFAULT_AGENTS: dict = {
-    "architect": {"model": None, "prompt_file": "prompts/architect.md"},
-    "engineer":  {"model": None, "prompt_file": "prompts/engineer.md"},
+    "architect":   {"model": None, "prompt_file": "prompts/architect.md"},
+    "developer":   {"model": None, "prompt_file": "prompts/developer.md"},
+    "qa_engineer": {"model": None, "prompt_file": "prompts/qa_engineer.md"},
 }
 
 # ── Config loading ────────────────────────────────────────────────────────────
