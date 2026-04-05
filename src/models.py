@@ -1,10 +1,11 @@
-"""Workflow models and enums for the two-agent coordination system."""
+"""Workflow models and enums for the multi-agent coordination system."""
 
 from enum import Enum
 from dataclasses import dataclass, field
 
 
 class AgentRole(Enum):
+    """Built-in role constants. Custom roles are plain strings — any value is valid."""
     ARCHITECT = "architect"
     ENGINEER = "engineer"
 
@@ -31,6 +32,7 @@ class HandoffStatus(Enum):
 
 
 class NextActor(Enum):
+    """Sentinel values for routing. Agents also route to custom role names (plain strings)."""
     ARCHITECT = "architect"
     ENGINEER = "engineer"
     HUMAN = "human"
@@ -47,9 +49,9 @@ class Task:
 
 @dataclass
 class HandoffMessage:
-    role: AgentRole
+    role: str           # any agent role name (e.g. "architect", "qa", "frontend")
     status: HandoffStatus
-    next: NextActor
+    next: str           # any agent role name, or "human" / "none"
     task_id: str
     title: str
     summary: str

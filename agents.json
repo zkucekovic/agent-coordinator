@@ -1,0 +1,12 @@
+{
+  "agents": {
+    "architect": {
+      "model": null,
+      "prompt_file": "prompts/architect.md"
+    },
+    "engineer": {
+      "model": null,
+      "prompt_file": "prompts/engineer.md"
+    }
+  }
+}

@@ -2,7 +2,7 @@
 
 import unittest
 from src.handoff_parser import parse_block, extract_latest
-from src.models import AgentRole, HandoffStatus, NextActor, HandoffMessage
+from src.models import HandoffStatus, HandoffMessage
 
 VALID_ARCHITECT_BLOCK = """
 ROLE: architect
@@ -87,18 +87,18 @@ class TestParseBlock(unittest.TestCase):
         msg, errors = parse_block(VALID_ARCHITECT_BLOCK)
         self.assertIsInstance(msg, HandoffMessage)
         self.assertEqual(errors, [])
-        self.assertEqual(msg.role, AgentRole.ARCHITECT)
+        self.assertEqual(msg.role, "architect")
         self.assertEqual(msg.status, HandoffStatus.CONTINUE)
-        self.assertEqual(msg.next, NextActor.ENGINEER)
+        self.assertEqual(msg.next, "engineer")
         self.assertEqual(msg.task_id, "task-001")
 
     def test_valid_engineer_block(self):
         msg, errors = parse_block(VALID_ENGINEER_BLOCK)
         self.assertIsInstance(msg, HandoffMessage)
         self.assertEqual(errors, [])
-        self.assertEqual(msg.role, AgentRole.ENGINEER)
+        self.assertEqual(msg.role, "engineer")
         self.assertEqual(msg.status, HandoffStatus.REVIEW_REQUIRED)
-        self.assertEqual(msg.next, NextActor.ARCHITECT)
+        self.assertEqual(msg.next, "architect")
 
     def test_missing_next_field(self):
         msg, errors = parse_block(MISSING_NEXT_BLOCK)
@@ -110,10 +110,12 @@ class TestParseBlock(unittest.TestCase):
         self.assertIsNone(msg)
         self.assertTrue(len(errors) > 0)
 
-    def test_invalid_role_value(self):
+    def test_custom_role_is_valid(self):
+        """Any role string (e.g. 'qa', 'frontend') should be accepted."""
         msg, errors = parse_block(INVALID_ROLE_BLOCK)
-        self.assertIsNone(msg)
-        self.assertTrue(len(errors) > 0)
+        self.assertIsInstance(msg, HandoffMessage)
+        self.assertEqual(errors, [])
+        self.assertEqual(msg.role, "robot")
 
 
 class TestExtractLatest(unittest.TestCase):
@@ -122,14 +124,14 @@ class TestExtractLatest(unittest.TestCase):
         msg, errors = extract_latest(SINGLE_VALID_CONTENT)
         self.assertIsInstance(msg, HandoffMessage)
         self.assertEqual(errors, [])
-        self.assertEqual(msg.role, AgentRole.ARCHITECT)
+        self.assertEqual(msg.role, "architect")
 
     def test_two_valid_blocks_returns_last(self):
         msg, errors = extract_latest(MULTI_BLOCK_CONTENT)
         self.assertIsInstance(msg, HandoffMessage)
         self.assertEqual(errors, [])
         # Last block is engineer
-        self.assertEqual(msg.role, AgentRole.ENGINEER)
+        self.assertEqual(msg.role, "engineer")
 
     def test_no_blocks_returns_none_with_errors(self):
         msg, errors = extract_latest(NO_BLOCKS_CONTENT)
@@ -140,7 +142,7 @@ class TestExtractLatest(unittest.TestCase):
         msg, errors = extract_latest(INVALID_THEN_VALID_CONTENT)
         self.assertIsInstance(msg, HandoffMessage)
         self.assertEqual(errors, [])
-        self.assertEqual(msg.role, AgentRole.ARCHITECT)
+        self.assertEqual(msg.role, "architect")
 
 
 if __name__ == '__main__':

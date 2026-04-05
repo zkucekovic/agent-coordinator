@@ -1,20 +1,29 @@
 #!/usr/bin/env python3
 """
-coordinator.py — drives Architect and Engineer OpenCode sessions
-using handoff.md as the shared communication channel.
+coordinator.py — drives multi-agent OpenCode sessions via handoff.md.
+
+Supports any number of named agents (architect, engineer, qa, frontend, etc.)
+configured in agents.json in the workspace directory.
 
 Usage:
-    python3 coordinator.py [--workspace PATH] [--max-turns N]
-                           [--architect-model PROVIDER/MODEL]
-                           [--engineer-model PROVIDER/MODEL]
-                           [--reset]
+    python3 coordinator.py [--workspace PATH] [--max-turns N] [--reset] [--quiet]
+
+Agent configuration (agents.json in workspace):
+    {
+      "agents": {
+        "architect": { "model": null, "prompt_file": "prompts/architect.md" },
+        "engineer":  { "model": null, "prompt_file": "prompts/engineer.md" },
+        "qa":        { "model": null, "prompt_file": "prompts/qa.md" }
+      }
+    }
 
 The coordinator:
   1. Reads the NEXT field from the latest handoff block
-  2. Sends a turn prompt to the appropriate OpenCode session
-  3. Waits for the agent to write its handoff block to handoff.md
-  4. Routes to the next agent
-  5. Stops when status is plan_complete, needs_human, or blocked
+  2. Looks up that agent's model and prompt in agents.json
+  3. Sends a turn prompt to the appropriate OpenCode session
+  4. Waits for the agent to write its handoff block to handoff.md
+  5. Routes to the next agent
+  6. Stops when status is plan_complete, needs_human, or blocked
 """
 
 import argparse
@@ -30,12 +39,28 @@ from pathlib import Path
 
 DEFAULT_WORKSPACE = Path(__file__).parent.resolve()
 DEFAULT_MAX_TURNS = 30
-DEFAULT_ARCHITECT_MODEL = None  # uses opencode's configured default
-DEFAULT_ENGINEER_MODEL = None
 
 SESSION_FILE = ".coordinator_sessions.json"
+AGENTS_FILE = "agents.json"
 
 STOP_STATUSES = {"plan_complete", "needs_human", "blocked"}
+
+# Built-in agent config used when agents.json is absent
+_DEFAULT_AGENTS = {
+    "architect": {"model": None, "prompt_file": "prompts/architect.md"},
+    "engineer":  {"model": None, "prompt_file": "prompts/engineer.md"},
+}
+
+# ── Agent config ──────────────────────────────────────────────────────────────
+
+def load_agent_config(workspace: Path) -> dict:
+    """Load agents.json from workspace, falling back to built-in defaults."""
+    path = workspace / AGENTS_FILE
+    if path.exists():
+        data = json.loads(path.read_text())
+        return data.get("agents", data)  # accept top-level dict or {"agents": {...}}
+    return _DEFAULT_AGENTS
+
 
 # ── Session persistence ────────────────────────────────────────────────────────
 
@@ -54,10 +79,7 @@ def save_sessions(workspace: Path, sessions: dict) -> None:
 # ── Handoff parsing ────────────────────────────────────────────────────────────
 
 def get_latest_block_fields(workspace: Path) -> dict:
-    """
-    Extract fields from the last valid ---HANDOFF--- block.
-    Returns dict with keys: next, status, task_id, role. Empty dict if none found.
-    """
+    """Extract fields from the last valid ---HANDOFF--- block."""
     content = (workspace / "handoff.md").read_text()
     blocks = re.findall(r"---HANDOFF---(.*?)---END---", content, re.DOTALL)
     if not blocks:
@@ -80,10 +102,7 @@ def run_opencode(
     model: str | None = None,
     verbose: bool = True,
 ) -> tuple[str, str]:
-    """
-    Run opencode non-interactively.
-    Returns (session_id, full_text_response).
-    """
+    """Run opencode non-interactively. Returns (session_id, full_text_response)."""
     cmd = [
         "opencode", "run", message,
         "--format", "json",
@@ -101,7 +120,6 @@ def run_opencode(
 
     text_parts = []
     sid = session_id
-    errors = []
 
     for line in result.stdout.splitlines():
         try:
@@ -112,19 +130,16 @@ def run_opencode(
                 text_parts.append(chunk)
                 if verbose:
                     print(chunk, end="", flush=True)
-            elif etype in ("error", "assistant_error"):
-                errors.append(str(event))
             if not sid and "sessionID" in event:
                 sid = event["sessionID"]
         except json.JSONDecodeError:
             pass
 
     if verbose and text_parts:
-        print()  # newline after streamed output
+        print()
 
     if result.returncode != 0 and not text_parts:
-        stderr = result.stderr.strip()
-        raise RuntimeError(f"opencode exited {result.returncode}: {stderr}")
+        raise RuntimeError(f"opencode exited {result.returncode}: {result.stderr.strip()}")
 
     return sid, "".join(text_parts)
 
@@ -134,14 +149,20 @@ def run_opencode(
 def build_turn_prompt(
     role: str,
     workspace: Path,
+    agent_cfg: dict,
     fields: dict,
     first_turn: bool,
 ) -> str:
     """Build the message sent to an agent for one turn."""
     handoff_content = (workspace / "handoff.md").read_text()
 
-    role_prompt = (workspace / "prompts" / f"{role}.md").read_text()
-    shared_rules = (workspace / "prompts" / "shared_rules.md").read_text()
+    prompt_file = workspace / agent_cfg.get("prompt_file", f"prompts/{role}.md")
+    role_prompt = prompt_file.read_text() if prompt_file.exists() else (
+        f"You are the **{role.upper()} agent**. Follow the shared rules and handoff protocol."
+    )
+
+    shared_rules_file = workspace / "prompts" / "shared_rules.md"
+    shared_rules = shared_rules_file.read_text() if shared_rules_file.exists() else ""
 
     task_hint = f"(current task: {fields.get('task_id', 'unknown')})" if fields.get("task_id") else ""
 
@@ -182,23 +203,21 @@ Take your action now:
 def run_coordinator(
     workspace: Path,
     max_turns: int,
-    architect_model: str | None,
-    engineer_model: str | None,
     reset: bool,
     verbose: bool,
 ) -> None:
+    agents = load_agent_config(workspace)
     sessions = {} if reset else load_sessions(workspace)
     if reset:
         print("⚠  Session state reset — starting fresh sessions.")
 
-    turn_counts = {"architect": 0, "engineer": 0}
+    turn_counts: dict[str, int] = {}
     total_turns = 0
 
     print(f"\n{'─'*60}")
     print(f"  Coordination workspace: {workspace}")
     print(f"  Max turns: {max_turns}")
-    print(f"  Architect model: {architect_model or 'default'}")
-    print(f"  Engineer model:  {engineer_model or 'default'}")
+    print(f"  Configured agents: {', '.join(agents.keys())}")
     print(f"{'─'*60}\n")
 
     while total_turns < max_turns:
@@ -231,22 +250,25 @@ def run_coordinator(
             print("\n⚠  NEXT: human — pausing for human operator. Edit handoff.md then re-run.")
             break
 
-        if next_actor not in ("architect", "engineer"):
-            print(f"\n❓  Unknown next actor: {next_actor!r}. Stopping.")
-            break
+        # ── Look up agent config ──
+        if next_actor not in agents:
+            print(f"\n❓  Unknown agent: {next_actor!r}")
+            print(f"   Known agents: {', '.join(agents.keys())}")
+            print(f"   Add '{next_actor}' to agents.json in your workspace, then re-run.")
+            sys.exit(1)
 
-        # ── Build prompt ──
-        model = architect_model if next_actor == "architect" else engineer_model
+        agent_cfg = agents[next_actor]
+        model = agent_cfg.get("model")
+
         first_turn = next_actor not in sessions
-        prompt = build_turn_prompt(next_actor, workspace, fields, first_turn)
+        prompt = build_turn_prompt(next_actor, workspace, agent_cfg, fields, first_turn)
 
         print(f"  Agent: {next_actor.upper()}")
         if verbose:
             print(f"  {'─'*40}")
 
-        # ── Run the agent ──
         try:
-            session_id, response = run_opencode(
+            session_id, _ = run_opencode(
                 message=prompt,
                 workspace=workspace,
                 session_id=sessions.get(next_actor),
@@ -257,35 +279,30 @@ def run_coordinator(
             print(f"\n❌  OpenCode error: {e}")
             sys.exit(1)
 
-        # ── Persist session ID ──
         sessions[next_actor] = session_id
         save_sessions(workspace, sessions)
 
-        turn_counts[next_actor] += 1
+        turn_counts[next_actor] = turn_counts.get(next_actor, 0) + 1
         total_turns += 1
 
-        # ── Verify the agent wrote a new block ──
         new_fields = get_latest_block_fields(workspace)
         new_next = new_fields.get("next", "").lower()
         new_status = new_fields.get("status", "").lower()
 
         if new_fields == fields:
             print(f"\n⚠  WARNING: handoff.md was not updated by {next_actor}. Check the agent output.")
-            print("   You may need to manually inspect and re-run.")
             break
 
         print(f"  ✓ handoff.md updated → status={new_status}, next={new_next}")
-
-        # Small pause to avoid hammering the API
         time.sleep(1)
 
     else:
         print(f"\n⚠  Reached max turns ({max_turns}). Stopping.")
 
     print(f"\n{'─'*60}")
-    print(f"  Total turns:     {total_turns}")
-    print(f"  Architect turns: {turn_counts['architect']}")
-    print(f"  Engineer turns:  {turn_counts['engineer']}")
+    print(f"  Total turns: {total_turns}")
+    for agent, count in sorted(turn_counts.items()):
+        print(f"  {agent.capitalize()} turns: {count}")
     print(f"{'─'*60}")
 
 
@@ -293,22 +310,18 @@ def run_coordinator(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Drive Architect + Engineer OpenCode sessions via handoff.md",
+        description="Drive multi-agent OpenCode sessions via handoff.md",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Run with defaults (uses opencode's configured model)
+  # Run with defaults (architect + engineer, opencode's configured model)
   python3 coordinator.py
 
-  # Specify models
-  python3 coordinator.py --architect-model anthropic/claude-sonnet-4-5 \\
-                         --engineer-model anthropic/claude-sonnet-4-5
+  # Run from a different workspace with custom agents defined in agents.json
+  python3 coordinator.py --workspace /path/to/my/project
 
   # Reset sessions (forget prior context, start fresh)
   python3 coordinator.py --reset
-
-  # Run from a different workspace
-  python3 coordinator.py --workspace /path/to/my/project
 
   # Limit turns (useful for testing)
   python3 coordinator.py --max-turns 5
@@ -323,14 +336,6 @@ Examples:
         help=f"Maximum number of agent turns (default: {DEFAULT_MAX_TURNS})",
     )
     parser.add_argument(
-        "--architect-model", type=str, default=DEFAULT_ARCHITECT_MODEL,
-        help="Model for architect agent (e.g. anthropic/claude-sonnet-4-5)",
-    )
-    parser.add_argument(
-        "--engineer-model", type=str, default=DEFAULT_ENGINEER_MODEL,
-        help="Model for engineer agent (e.g. anthropic/claude-sonnet-4-5)",
-    )
-    parser.add_argument(
         "--reset", action="store_true",
         help="Discard saved session IDs and start fresh sessions",
     )
@@ -340,8 +345,8 @@ Examples:
     )
 
     args = parser.parse_args()
-
     workspace = args.workspace.resolve()
+
     if not (workspace / "handoff.md").exists():
         print(f"❌  handoff.md not found in {workspace}")
         print("   Initialize the workspace first (see README.md).")
@@ -350,8 +355,6 @@ Examples:
     run_coordinator(
         workspace=workspace,
         max_turns=args.max_turns,
-        architect_model=args.architect_model,
-        engineer_model=args.engineer_model,
         reset=args.reset,
         verbose=not args.quiet,
     )

@@ -1,8 +1,8 @@
-"""Parser for structured handoff blocks in the two-agent coordination workflow."""
+"""Parser for structured handoff blocks in the multi-agent coordination workflow."""
 
 import re
 from src.models import (
-    AgentRole, HandoffStatus, NextActor,
+    HandoffStatus,
     HandoffMessage, ValidationResult
 )
 
@@ -78,19 +78,22 @@ def parse_block(block_text: str) -> tuple[HandoffMessage | None, list[str]]:
         return None, errors
 
     try:
-        role = AgentRole(scalars['ROLE'].lower())
-    except ValueError:
-        errors.append(f"Invalid ROLE value: {scalars['ROLE']!r}")
+        role = scalars['ROLE'].lower().strip()
+        if not role:
+            errors.append("ROLE field must not be empty")
+    except (KeyError, AttributeError):
+        errors.append("Missing or invalid ROLE field")
+        role = ""
 
+    status = None
     try:
         status = HandoffStatus(scalars['STATUS'].lower())
     except ValueError:
         errors.append(f"Invalid STATUS value: {scalars['STATUS']!r}")
 
-    try:
-        next_actor = NextActor(scalars['NEXT'].lower())
-    except ValueError:
-        errors.append(f"Invalid NEXT value: {scalars['NEXT']!r}")
+    next_actor = scalars.get('NEXT', '').lower().strip()
+    if not next_actor:
+        errors.append("NEXT field must not be empty")
 
     if errors:
         return None, errors

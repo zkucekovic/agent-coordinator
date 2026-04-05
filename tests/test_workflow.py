@@ -4,7 +4,7 @@ import json
 import os
 import tempfile
 import unittest
-from src.models import AgentRole, HandoffStatus, NextActor, HandoffMessage
+from src.models import HandoffStatus, HandoffMessage
 from src.workflow import (
     get_next_actor, is_plan_complete, is_human_escalation, is_blocked,
     get_workflow_state,
@@ -28,9 +28,9 @@ BLOCKERS: none
 """
 
 
-def _make_msg(status=HandoffStatus.CONTINUE, next_actor=NextActor.ENGINEER):
+def _make_msg(status=HandoffStatus.CONTINUE, next_actor="engineer"):
     return HandoffMessage(
-        role=AgentRole.ARCHITECT,
+        role="architect",
         status=status,
         next=next_actor,
         task_id="t",
@@ -42,12 +42,16 @@ def _make_msg(status=HandoffStatus.CONTINUE, next_actor=NextActor.ENGINEER):
 class TestGetNextActor(unittest.TestCase):
 
     def test_returns_msg_next(self):
-        msg = _make_msg(next_actor=NextActor.ENGINEER)
-        self.assertEqual(get_next_actor(msg), NextActor.ENGINEER)
+        msg = _make_msg(next_actor="engineer")
+        self.assertEqual(get_next_actor(msg), "engineer")
 
     def test_returns_human(self):
-        msg = _make_msg(next_actor=NextActor.HUMAN)
-        self.assertEqual(get_next_actor(msg), NextActor.HUMAN)
+        msg = _make_msg(next_actor="human")
+        self.assertEqual(get_next_actor(msg), "human")
+
+    def test_returns_custom_role(self):
+        msg = _make_msg(next_actor="qa")
+        self.assertEqual(get_next_actor(msg), "qa")
 
 
 class TestIsPlanComplete(unittest.TestCase):
@@ -68,15 +72,15 @@ class TestIsPlanComplete(unittest.TestCase):
 class TestIsHumanEscalation(unittest.TestCase):
 
     def test_true_when_next_is_human(self):
-        msg = _make_msg(next_actor=NextActor.HUMAN)
+        msg = _make_msg(next_actor="human")
         self.assertTrue(is_human_escalation(msg))
 
     def test_false_when_next_is_engineer(self):
-        msg = _make_msg(next_actor=NextActor.ENGINEER)
+        msg = _make_msg(next_actor="engineer")
         self.assertFalse(is_human_escalation(msg))
 
     def test_false_when_next_is_none(self):
-        msg = _make_msg(next_actor=NextActor.NONE)
+        msg = _make_msg(next_actor="none")
         self.assertFalse(is_human_escalation(msg))
 
 

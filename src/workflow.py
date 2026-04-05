@@ -1,10 +1,10 @@
-"""Workflow helper functions for the two-agent coordination system."""
+"""Workflow helper functions for the multi-agent coordination system."""
 
-from src.models import HandoffMessage, HandoffStatus, NextActor
+from src.models import HandoffMessage, HandoffStatus
 from src.handoff_parser import extract_latest
 
 
-def get_next_actor(message: HandoffMessage) -> NextActor:
+def get_next_actor(message: HandoffMessage) -> str:
     """Return the next actor declared in the handoff message."""
     return message.next
 
@@ -16,7 +16,7 @@ def is_plan_complete(message: HandoffMessage) -> bool:
 
 def is_human_escalation(message: HandoffMessage) -> bool:
     """Return True if the next actor is human (escalation required)."""
-    return message.next == NextActor.HUMAN
+    return message.next == "human"
 
 
 def is_blocked(message: HandoffMessage) -> bool:
@@ -59,7 +59,7 @@ def get_workflow_state(handoff_file_path: str) -> dict:
 
     return {
         "valid": True,
-        "next_actor": message.next.value,
+        "next_actor": message.next,
         "status": message.status.value,
         "task_id": message.task_id,
         "is_complete": is_plan_complete(message),
