@@ -1,12 +1,20 @@
 {
+  "retry_policy": {
+    "max_rework": 3,
+    "on_exceed": "needs_human"
+  },
   "agents": {
     "architect": {
       "model": null,
       "prompt_file": "prompts/architect.md"
     },
-    "engineer": {
+    "developer": {
       "model": null,
-      "prompt_file": "prompts/engineer.md"
+      "prompt_file": "prompts/developer.md"
+    },
+    "qa_engineer": {
+      "model": null,
+      "prompt_file": "prompts/qa_engineer.md"
     }
   }
 }

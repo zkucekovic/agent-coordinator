@@ -1,10 +1,10 @@
 # Shared Session Rules
 
-Both architect and engineer must follow these rules at all times.
+All agents must follow these rules at all times.
 
 1. **Read before writing** — always read the latest valid handoff block before taking any action.
 
-2. **Respect role boundaries** — do not perform the other role's work unless the human operator explicitly changes the rules.
+2. **Respect role boundaries** — do not perform another role's work unless the human operator explicitly changes the rules.
 
 3. **Append-only handoff** — never rewrite or delete prior handoff history during normal operation.
 
