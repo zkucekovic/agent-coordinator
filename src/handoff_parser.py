@@ -1,7 +1,7 @@
 """Parser for structured handoff blocks in the multi-agent coordination workflow."""
 
 import re
-from src.models import (
+from src.domain.models import (
     HandoffStatus,
     HandoffMessage, ValidationResult
 )

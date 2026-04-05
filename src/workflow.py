@@ -1,7 +1,13 @@
-"""Workflow helper functions for the multi-agent coordination system."""
+"""Backwards-compatibility shim — delegates to src.application.router and src.infrastructure.
 
-from src.models import HandoffMessage, HandoffStatus
+New code should use WorkflowRouter directly.
+"""
+
+from src.domain.models import HandoffMessage, HandoffStatus
+from src.application.router import WorkflowRouter
 from src.handoff_parser import extract_latest
+
+_router = WorkflowRouter()
 
 
 def get_next_actor(message: HandoffMessage) -> str:
@@ -10,41 +16,22 @@ def get_next_actor(message: HandoffMessage) -> str:
 
 
 def is_plan_complete(message: HandoffMessage) -> bool:
-    """Return True if the handoff message declares plan_complete status."""
     return message.status == HandoffStatus.PLAN_COMPLETE
 
 
 def is_human_escalation(message: HandoffMessage) -> bool:
-    """Return True if the next actor is human (escalation required)."""
     return message.next == "human"
 
 
 def is_blocked(message: HandoffMessage) -> bool:
-    """Return True if the workflow is blocked or needs human intervention."""
     return message.status in (HandoffStatus.BLOCKED, HandoffStatus.NEEDS_HUMAN)
 
 
 def get_workflow_state(handoff_file_path: str) -> dict:
-    """
-    Read a handoff file and return the current workflow state as a dict.
-
-    Returns:
-        {
-            "valid": bool,
-            "next_actor": str,   # NEXT field value or "unknown"
-            "status": str,       # STATUS field value or "unknown"
-            "task_id": str,      # TASK_ID value or "unknown"
-            "is_complete": bool, # True if plan_complete
-            "is_blocked": bool,  # True if blocked or needs_human
-            "needs_human": bool, # True if next_actor is human
-            "errors": list[str], # parse errors if any
-        }
-    """
-    with open(handoff_file_path, 'r', encoding='utf-8') as f:
+    with open(handoff_file_path, "r", encoding="utf-8") as f:
         content = f.read()
 
     message, errors = extract_latest(content)
-
     if message is None:
         return {
             "valid": False,
@@ -57,6 +44,7 @@ def get_workflow_state(handoff_file_path: str) -> dict:
             "errors": errors,
         }
 
+    decision = _router.route(message)
     return {
         "valid": True,
         "next_actor": message.next,
@@ -67,3 +55,4 @@ def get_workflow_state(handoff_file_path: str) -> dict:
         "needs_human": is_human_escalation(message),
         "errors": [],
     }
+

@@ -1,0 +1,100 @@
+"""Prompt builder — constructs the text message sent to an agent for one turn.
+
+Single responsibility: produce a well-formed prompt string.
+No I/O, no subprocess calls.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from src.domain.models import Task
+
+
+class PromptBuilder:
+    """
+    Builds the turn prompt delivered to an agent via OpenCode.
+
+    Separating this from the coordinator keeps prompt logic independently
+    testable and swappable (e.g. to support different prompt strategies).
+    """
+
+    def build(
+        self,
+        role: str,
+        workspace: Path,
+        handoff_content: str,
+        agent_cfg: dict,
+        next_task: Task | None = None,
+        first_turn: bool = False,
+    ) -> str:
+        """
+        Build and return the full prompt string for one agent turn.
+
+        Args:
+            role:             Agent role name (e.g. "architect", "qa").
+            workspace:        Absolute path to the project workspace directory.
+            handoff_content:  Full text of handoff.md at the time of this turn.
+            agent_cfg:        Agent config dict (from agents.json entry).
+            next_task:        The next ready task, injected for the architect's
+                              awareness. None if no task is auto-selected.
+            first_turn:       True on the agent's first ever turn — includes the
+                              full role prompt and shared rules preamble.
+        """
+        role_prompt = self._load_role_prompt(role, workspace, agent_cfg)
+        shared_rules = self._load_shared_rules(workspace)
+        task_hint = f"(current task: {next_task.id})" if next_task else ""
+        task_context = self._task_context(next_task)
+
+        if first_turn:
+            preamble = (
+                f"You are the **{role.upper()} agent** for this project. "
+                f"Your working directory is `{workspace}`.\n\n"
+                f"{role_prompt}\n\n---\n\n{shared_rules}\n\n---\n"
+            )
+        else:
+            preamble = (
+                f"You are the **{role.upper()} agent**. "
+                f"Your working directory is `{workspace}`.\n\n"
+            )
+
+        return (
+            f"{preamble}\n"
+            f"## Current state of handoff.md {task_hint}\n\n"
+            f"```\n{handoff_content}\n```\n\n"
+            f"{task_context}"
+            f"---\n\n"
+            f"Read the latest `---HANDOFF---` block above. "
+            f"`NEXT: {role}` — it is your turn.\n\n"
+            f"Take your action now:\n"
+            f"- Work in `{workspace}` (read and write files as needed)\n"
+            f"- Append your handoff entry to `{workspace}/handoff.md`\n"
+            f"- End with a valid `---HANDOFF---` … `---END---` block\n"
+        )
+
+    def _load_role_prompt(self, role: str, workspace: Path, agent_cfg: dict) -> str:
+        prompt_file = workspace / agent_cfg.get("prompt_file", f"prompts/{role}.md")
+        if prompt_file.exists():
+            return prompt_file.read_text()
+        return (
+            f"You are the **{role.upper()} agent**. "
+            f"Follow the shared rules and handoff protocol."
+        )
+
+    def _load_shared_rules(self, workspace: Path) -> str:
+        shared_rules_file = workspace / "prompts" / "shared_rules.md"
+        return shared_rules_file.read_text() if shared_rules_file.exists() else ""
+
+    @staticmethod
+    def _task_context(task: Task | None) -> str:
+        if task is None:
+            return ""
+        rework_note = (
+            f" (rework #{task.rework_count})" if task.rework_count > 0 else ""
+        )
+        return (
+            f"### Next ready task{rework_note}\n\n"
+            f"- **ID**: {task.id}\n"
+            f"- **Title**: {task.title}\n"
+            f"- **Status**: {task.status.value}\n\n"
+        )
