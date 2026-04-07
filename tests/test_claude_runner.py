@@ -18,7 +18,9 @@ class TestClaudeRunnerBuildCmd(unittest.TestCase):
         cmd = self.runner._build_cmd("hello", self.workspace, None, None)
         self.assertEqual(
             cmd,
-            ["claude", "--print", "--output-format", "json", "--cwd", str(self.workspace), "hello"],
+            ["claude", "--print", "--output-format", "json",
+             "--permission-mode", "bypassPermissions",
+             "--cwd", str(self.workspace), "hello"],
         )
 
     def test_build_cmd_with_session_id(self):

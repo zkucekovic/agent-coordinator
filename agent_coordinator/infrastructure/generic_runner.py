@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from agent_coordinator.application.runner import AgentRunner
 from agent_coordinator.domain.models import RunResult

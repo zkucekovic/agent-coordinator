@@ -30,7 +30,10 @@ class ClaudeCodeRunner(AgentRunner):
         return self._parse_output(result, session_id)
 
     def _build_cmd(self, message, workspace, session_id, model):
-        cmd = ["claude", "--print", "--output-format", "json"]
+        cmd = [
+            "claude", "--print", "--output-format", "json",
+            "--permission-mode", "bypassPermissions",
+        ]
         if session_id:
             cmd += ["--continue", "--session-id", session_id]
         if model:

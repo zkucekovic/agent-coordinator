@@ -7,6 +7,7 @@ and presses Enter to continue.
 
 from __future__ import annotations
 
+import sys
 import uuid
 from pathlib import Path
 from typing import Callable
@@ -26,8 +27,9 @@ class ManualRunner(AgentRunner):
     - Environments where a specific tool is not available
     """
 
-    def __init__(self, verbose: bool = True) -> None:
+    def __init__(self, verbose: bool = True, input_fn: Callable[[str], str] | None = None) -> None:
         self._verbose = verbose
+        self._input_fn = input_fn
 
     def run(
         self,
@@ -48,17 +50,27 @@ class ManualRunner(AgentRunner):
         """
         sid = session_id or f"manual-{uuid.uuid4().hex[:8]}"
 
-        print(f"\n{'═' * 60}")
-        print(f"  MANUAL TURN — Human action required")
-        print(f"  Workspace: {workspace}")
-        print(f"  Session:   {sid}")
-        print(f"{'═' * 60}")
+        emit = on_output or (lambda s: print(s, file=sys.stderr))
+
+        sep = "═" * 60
+        emit(f"\n{sep}")
+        emit("  MANUAL TURN — Human action required")
+        emit(f"  Workspace: {workspace}")
+        emit(f"  Session:   {sid}")
+        emit(sep)
 
         if self._verbose:
-            print(f"\n--- Prompt ---\n{message}\n--- End prompt ---\n")
+            emit(f"\n--- Prompt ---\n{message}\n--- End prompt ---\n")
 
-        print(f"Perform your work in: {workspace}")
-        print(f"Then update: {workspace}/handoff.md")
-        input("\nPress Enter when done → ")
+        emit(f"Perform your work in: {workspace}")
+        emit(f"Then update: {workspace}/handoff.md")
+
+        prompt_text = "\nPress Enter when done → "
+        if self._input_fn:
+            self._input_fn(prompt_text)
+        elif sys.stdin.isatty():
+            input(prompt_text)
+        else:
+            emit("(stdin is not a TTY — skipping interactive prompt)")
 
         return RunResult(session_id=sid, text="[manual turn completed by human]")

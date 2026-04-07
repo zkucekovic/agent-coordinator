@@ -429,7 +429,11 @@ def run_coordinator(workspace: Path, max_turns: int, reset: bool, verbose: bool,
 
                 agent_cfg = agents[agent]
                 if agent not in runner_cache:
-                    runner_cache[agent] = create_runner_for_agent(agent_cfg, default_backend, verbose)
+                    r = create_runner_for_agent(agent_cfg, default_backend, verbose)
+                    from agent_coordinator.infrastructure.manual_runner import ManualRunner
+                    if isinstance(r, ManualRunner) and hasattr(display, 'read_input'):
+                        r._input_fn = display.read_input
+                    runner_cache[agent] = r
                 runner = runner_cache[agent]
                 backend_name = agent_cfg.get("backend", default_backend)
 
