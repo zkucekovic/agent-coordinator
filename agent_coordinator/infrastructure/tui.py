@@ -26,6 +26,7 @@ Layout (inside alternate screen)
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import signal
 import sys
@@ -45,6 +46,7 @@ except ImportError:
 # ── ANSI helpers ──────────────────────────────────────────────────────────────
 
 ESC = "\033"
+_ANSI_RE = re.compile(r"\033\[[0-9;]*[mGKHJABCDsuhr]|\033\[[?][0-9]*[hl]")
 
 def _csi(*parts: str) -> str:
     return ESC + "[" + "".join(parts)
@@ -913,7 +915,6 @@ def _classify_error(exc: BaseException) -> tuple[str, str]:
 
     if "not available" in msg and ("model" in msg.lower() or "--model" in msg):
         # Extract model name if present
-        import re
         m = re.search(r'"([^"]+)"', msg)
         model = m.group(1) if m else "the configured model"
         return (
