@@ -61,10 +61,15 @@ _HANDOFF_TO_TASK_STATUS: dict[HandoffStatus, TaskStatus] = {
 # ── Config loading ────────────────────────────────────────────────────────────
 
 def load_config(workspace: Path) -> dict:
-    """Load and return the full agents.json content, or an empty dict."""
-    path = workspace / AGENTS_FILE
-    if path.exists():
-        return json.loads(path.read_text())
+    """Load and return the full agents.json content, or an empty dict.
+
+    Search order:
+      1. {workspace}/agents.json          ← project-specific config
+      2. {workspace}/../agents.json       ← repo-root fallback (common during dev)
+    """
+    for candidate in (workspace / AGENTS_FILE, workspace.parent / AGENTS_FILE):
+        if candidate.exists():
+            return json.loads(candidate.read_text())
     return {}
 
 
