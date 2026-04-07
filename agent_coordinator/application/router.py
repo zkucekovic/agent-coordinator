@@ -15,6 +15,7 @@ from agent_coordinator.domain.models import HandoffMessage, HandoffStatus
 _TERMINAL_STATUSES: frozenset[HandoffStatus] = frozenset({
     HandoffStatus.PLAN_COMPLETE,
     HandoffStatus.BLOCKED,
+    HandoffStatus.DONE,
 })
 
 # NEXT values that mean no agent should be invoked.
@@ -76,6 +77,7 @@ class WorkflowRouter:
     def _terminal_reason(status: HandoffStatus) -> str:
         reasons = {
             HandoffStatus.PLAN_COMPLETE: "Plan complete ✅",
+            HandoffStatus.DONE:          "Workflow complete ✅",
             HandoffStatus.NEEDS_HUMAN:   "Human input required ⚠",
             HandoffStatus.BLOCKED:       "Workflow blocked 🛑",
         }

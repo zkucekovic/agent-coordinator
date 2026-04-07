@@ -36,6 +36,7 @@ class HandoffStatus(Enum):
     IMPLEMENTATION_COMPLETE = "implementation_complete"
     REWORK_REQUIRED = "rework_required"
     APPROVED = "approved"
+    DONE = "done"
 
 
 class AgentRole(Enum):
