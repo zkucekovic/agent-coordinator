@@ -66,7 +66,10 @@ def setup(workspace: Path) -> Path:
 
     logger = logging.getLogger("agent_coordinator")
     logger.setLevel(logging.DEBUG)
-    # Avoid duplicate handlers if called multiple times (e.g. tests)
+    # Close and remove previous handlers to avoid FD leaks on re-setup
+    for h in logger.handlers[:]:
+        h.close()
+        logger.removeHandler(h)
     logger.handlers = [handler]
     logger.propagate = False
 

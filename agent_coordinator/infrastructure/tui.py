@@ -232,6 +232,8 @@ class Screen:
     _SEP_ROWS    = 1   # separator row above status bar
     _STATUS_ROWS = 1   # pinned status bar
 
+    _MAX_LINES = 5000  # cap content buffer to prevent unbounded memory growth
+
     def __init__(self, stream: TextIO = sys.stdout, theme: Theme | None = None) -> None:
         self._stream   = stream
         self._lock     = threading.Lock()
@@ -267,6 +269,20 @@ class Screen:
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
+    def _stop_animation(self) -> None:
+        """Stop the current animation thread if running."""
+        self._anim_stop.set()
+        if self._anim_thread is not None:
+            self._anim_thread.join(timeout=1)
+            self._anim_thread = None
+
+    def _start_animation(self) -> None:
+        """Start a new animation thread, stopping any existing one first."""
+        self._stop_animation()
+        self._anim_stop.clear()
+        self._anim_thread = threading.Thread(target=self._animate, daemon=True)
+        self._anim_thread.start()
+
     def start_menu(self) -> None:
         """Enter alt-screen for the startup menu (no agents, no turn counter)."""
         if not self._stream.isatty():
@@ -291,9 +307,7 @@ class Screen:
             self._orig_sigwinch = signal.signal(signal.SIGWINCH, self._on_resize)
         except (OSError, ValueError):
             pass
-        self._anim_stop.clear()
-        self._anim_thread = threading.Thread(target=self._animate, daemon=True)
-        self._anim_thread.start()
+        self._start_animation()
 
     def read_input(self, prompt: str) -> str:
         """
@@ -387,9 +401,7 @@ class Screen:
             pass   # not available on Windows or non-main thread
 
         # Start animation thread
-        self._anim_stop.clear()
-        self._anim_thread = threading.Thread(target=self._animate, daemon=True)
-        self._anim_thread.start()
+        self._start_animation()
 
     def set_paused(self, paused: bool) -> None:
         """Mark the coordinator as paused/resumed — updates header label."""
@@ -429,20 +441,14 @@ class Screen:
             except termios.error:
                 pass
         self._full_render()
-        self._anim_stop.clear()
-        self._anim_thread = threading.Thread(target=self._animate, daemon=True)
-        self._anim_thread.start()
+        self._start_animation()
 
     def close(self) -> None:
         """Exit alternate screen and restore terminal."""
         if not self._active:
             return
 
-        self._anim_stop.set()
-        if self._anim_thread:
-            self._anim_thread.join(timeout=1)
-
-        # Restore SIGWINCH
+        self._stop_animation()
         try:
             if self._orig_sigwinch is not None:
                 signal.signal(signal.SIGWINCH, self._orig_sigwinch)
@@ -460,6 +466,7 @@ class Screen:
             self._orig_termios = None
 
         self._active = False
+        self._lines.clear()  # free content buffer memory
 
     # ── Public display API (matches old TUIDisplay / AgentOutputDisplay) ───────
 
@@ -653,6 +660,8 @@ class Screen:
         """Add a line to the content ring-buffer and re-render content + status."""
         with self._lock:
             self._lines.append(text)
+            if len(self._lines) > self._MAX_LINES:
+                self._lines = self._lines[-self._MAX_LINES:]
             if not self._active:
                 # non-alt-screen fallback: just print
                 print(_strip_ansi(text))

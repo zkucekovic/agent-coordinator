@@ -93,6 +93,9 @@ def run_with_pty(
 
 # ── PTY implementation ────────────────────────────────────────────────────────
 
+_MAX_CHUNKS_BYTES = 10_000_000  # 10 MB safety cap for captured output
+
+
 def _run_pty(
     cmd: list[str],
     cwd: Path | None,
@@ -113,17 +116,35 @@ def _run_pty(
     # Separate pipe for stderr (no PTY noise, needed for session-ID extraction)
     stderr_r, stderr_w = os.pipe()
 
-    proc = subprocess.Popen(
-        cmd,
-        stdin=slave_fd,
-        stdout=slave_fd,
-        stderr=stderr_w,
-        cwd=cwd,
-        env=env,
-        close_fds=True,
-    )
-    os.close(slave_fd)
-    os.close(stderr_w)
+    # Track FDs that still need closing on error
+    open_fds = {master_fd, slave_fd, stderr_r, stderr_w}
+
+    def _close_fd(fd: int) -> None:
+        if fd in open_fds:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            open_fds.discard(fd)
+
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=stderr_w,
+            cwd=cwd,
+            env=env,
+            close_fds=True,
+        )
+    except Exception:
+        # Clean up all FDs if Popen fails
+        for fd in list(open_fds):
+            _close_fd(fd)
+        raise
+
+    _close_fd(slave_fd)
+    _close_fd(stderr_w)
 
     # ── Save current terminal state ───────────────────────────────────────────
     # Our TUI runs with ICANON+ECHO disabled.  We do NOT change the real
@@ -133,10 +154,12 @@ def _run_pty(
     # ICANON assembles them into lines for the subprocess.
 
     chunks: list[str]   = []
+    chunks_bytes: int   = 0
     done = threading.Event()
 
     # ── Output reader ─────────────────────────────────────────────────────────
     def _read_output() -> None:
+        nonlocal chunks_bytes
         buf = b""
         while not done.is_set():
             try:
@@ -156,14 +179,18 @@ def _run_pty(
             while b"\n" in buf:
                 line_b, buf = buf.split(b"\n", 1)
                 line = _strip(line_b.decode("utf-8", errors="replace")) + "\n"
-                chunks.append(line)
+                if chunks_bytes < _MAX_CHUNKS_BYTES:
+                    chunks.append(line)
+                    chunks_bytes += len(line)
                 if on_output:
                     on_output(line)
         # Flush any remaining partial line
         if buf:
             line = _strip(buf.decode("utf-8", errors="replace"))
             if line.strip():
-                chunks.append(line)
+                if chunks_bytes < _MAX_CHUNKS_BYTES:
+                    chunks.append(line)
+                    chunks_bytes += len(line)
                 if on_output:
                     on_output(line)
 
@@ -228,14 +255,8 @@ def _run_pty(
     except Exception:
         pass
 
-    try:
-        os.close(master_fd)
-    except OSError:
-        pass
-    try:
-        os.close(stderr_r)
-    except OSError:
-        pass
+    _close_fd(master_fd)
+    _close_fd(stderr_r)
 
     return PtyResult(
         returncode=proc.returncode,
@@ -265,11 +286,17 @@ def _run_pipe(
         )
         assert proc.stdout
         lines: list[str] = []
-        for line in proc.stdout:
-            lines.append(line)
-            on_output(line)
+        try:
+            for line in proc.stdout:
+                lines.append(line)
+                on_output(line)
+        finally:
+            proc.stdout.close()
         assert proc.stderr
-        stderr_text = proc.stderr.read()
+        try:
+            stderr_text = proc.stderr.read()
+        finally:
+            proc.stderr.close()
         proc.wait()
         return PtyResult(proc.returncode, "".join(lines).strip(), stderr_text.strip())
 

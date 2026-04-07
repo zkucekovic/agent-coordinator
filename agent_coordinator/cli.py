@@ -506,6 +506,7 @@ def run_coordinator(workspace: Path, max_turns: int, reset: bool, verbose: bool,
                 total_turns += 1
                 duration_seconds = round(time.monotonic() - t_start, 2)
                 response_text = "".join(output_buffer)
+                del output_buffer  # free the list early
 
                 if not handoff_updated:
                     logger.warning("agent did not update handoff", extra={"ctx": {"agent": agent}})
@@ -540,11 +541,12 @@ def run_coordinator(workspace: Path, max_turns: int, reset: bool, verbose: bool,
                     status_before=status,
                     status_after=new_status,
                     session_id=run_result.session_id,
-                    response_text=response_text,
+                    response_text=response_text[:50_000],
                     prompt_file=prompt_file_rel,
                     prompt_hash=prompt_hash,
                     duration_seconds=duration_seconds,
                 )
+                del response_text  # free the potentially large string
 
                 time.sleep(1)
 
