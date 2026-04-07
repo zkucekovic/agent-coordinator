@@ -256,6 +256,9 @@ class Screen:
         self._anim_thread: threading.Thread | None = None
         self._anim_stop   = threading.Event()
 
+        # Pause state
+        self._paused = False
+
         # SIGWINCH for resize
         self._orig_sigwinch: Callable | None = None
 
@@ -384,6 +387,48 @@ class Screen:
             pass   # not available on Windows or non-main thread
 
         # Start animation thread
+        self._anim_stop.clear()
+        self._anim_thread = threading.Thread(target=self._animate, daemon=True)
+        self._anim_thread.start()
+
+    def set_paused(self, paused: bool) -> None:
+        """Mark the coordinator as paused/resumed — updates header label."""
+        with self._lock:
+            self._paused = paused
+
+    def with_editor(self, path: "Path | str") -> None:
+        """
+        Temporarily leave alt-screen, open $EDITOR on path, then re-enter.
+        Safe to call from the main thread while the animation thread is running.
+        """
+        import subprocess
+        from agent_coordinator.infrastructure.editor import get_editor
+
+        self._anim_stop.set()
+        if self._anim_thread:
+            self._anim_thread.join(timeout=1)
+
+        if _HAS_TERMIOS and self._orig_termios is not None:
+            try:
+                termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, self._orig_termios)
+            except termios.error:
+                pass
+
+        self._write(_SHOW_CURSOR + _ALT_EXIT)
+        try:
+            subprocess.run([get_editor(), str(path)], check=True)
+        except Exception:
+            pass
+
+        self._write(_ALT_ENTER + _HIDE_CURSOR)
+        if _HAS_TERMIOS and self._orig_termios is not None:
+            try:
+                new = termios.tcgetattr(sys.stdin.fileno())
+                new[3] &= ~(termios.ECHO | termios.ECHOE | termios.ECHOK | termios.ICANON)
+                termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, new)
+            except termios.error:
+                pass
+        self._full_render()
         self._anim_stop.clear()
         self._anim_thread = threading.Thread(target=self._animate, daemon=True)
         self._anim_thread.start()
@@ -526,12 +571,17 @@ class Screen:
     def _render_header(self) -> str:
         t = self._theme
         title = "  AGENT COORDINATOR"
-        turn_info = f"turn {self._current_turn}/{self._max_turns}  "
-        pad = max(0, self._cols - len(title) - len(turn_info))
+        if self._paused:
+            state_tag = t.color_warning + _BOLD + "  ⏸ PAUSED" + _RESET + t.bg_header + t.text_dim
+        else:
+            state_tag = ""
+        turn_info = f"turn {self._current_turn}/{self._max_turns}  " if self._max_turns else ""
+        pad = max(0, self._cols - len(title) - len(state_tag and "  ⏸ PAUSED") - len(turn_info))
         return (
             _cup(1, 1)
             + t.bg_header + t.text_primary + _BOLD
             + title
+            + (state_tag if self._paused else "")
             + " " * pad
             + t.text_dim + turn_info
             + _RESET
@@ -823,6 +873,7 @@ class InterruptMenu:
 
     _ITEMS = [
         ("c", "Continue execution"),
+        ("t", "Stop after this turn"),
         ("r", "Retry current turn"),
         ("e", "Edit handoff.md"),
         ("m", "Add message to handoff"),
@@ -830,7 +881,7 @@ class InterruptMenu:
         ("─", ""),
         ("n", "/init  — initialize workspace"),
         ("s", "/import-spec  — import specification"),
-        ("p", "/import-plan  — import plan"),
+        ("l", "/import-plan  — import plan"),
         ("w", "/run  — switch workspace"),
         ("x", "/reset  — clear session state"),
         ("─", ""),

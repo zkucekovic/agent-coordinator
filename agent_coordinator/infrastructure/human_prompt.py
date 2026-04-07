@@ -3,8 +3,183 @@
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 from datetime import datetime, timezone
+from pathlib import Path
+
+
+def prompt_human_input(handoff_path: Path, task_id: str, current_status: str,
+                       display=None) -> str:
+    """
+    Prompt the user for input when the workflow requires human action.
+    Uses the TUI display when available, falls back to plain text otherwise.
+    Returns 'continue' or 'quit'.
+    """
+    if display is not None and hasattr(display, 'show_error_dialog'):
+        return _prompt_tui(handoff_path, task_id, current_status, display)
+    return _prompt_plain(handoff_path, task_id, current_status)
+
+
+# ── TUI path ──────────────────────────────────────────────────────────────────
+
+def _prompt_tui(handoff_path: Path, task_id: str, current_status: str,
+                display) -> str:
+    t = display._theme
+
+    display._append_content("")
+    display._append_content(
+        f"  {t.color_warning}\033[1m⚠  Human input required\033[0m"
+        f"  {t.text_dim}task: {task_id}  status: {current_status}\033[0m"
+    )
+    display._append_content(
+        f"  {t.text_dim}{'─' * (display._cols - 4)}\033[0m"
+    )
+
+    while True:
+        choice = display.show_error_dialog(
+            "Human Input Required",
+            f"Task: {task_id}\nStatus: {current_status}\n\n"
+            f"The workflow needs your input to continue.",
+            [("r", "Respond"), ("e", "Edit handoff.md"), ("v", "View handoff"), ("q", "Quit")],
+        )
+
+        if choice == "r":
+            display._append_content(
+                f"  {t.text_dim}Enter your response (blank line to finish):\033[0m"
+            )
+            lines: list[str] = []
+            while True:
+                line = display.read_input("")
+                if line == "":
+                    break
+                lines.append(line)
+
+            response = "\n".join(lines).strip()
+            if not response:
+                display._append_content(
+                    f"  {t.color_warning}⚠  No response entered\033[0m"
+                )
+                continue
+
+            next_agent_raw = display.read_input(
+                "Route to agent [architect/developer/qa_engineer/helper]: "
+            )
+            next_agent = next_agent_raw.strip().lower() or "architect"
+
+            _write_human_handoff(handoff_path, task_id, response, next_agent)
+            display._append_content(
+                f"  {t.color_success}✓  Response added → routing to {next_agent}\033[0m"
+            )
+            return "continue"
+
+        elif choice == "e":
+            display.with_editor(handoff_path)
+            return "continue"
+
+        elif choice == "v":
+            if handoff_path.exists():
+                lines_view = handoff_path.read_text(errors="replace").splitlines()
+                display._append_content(
+                    f"  {t.text_dim}── handoff.md ({'last 30 lines'}) ──\033[0m"
+                )
+                for ln in lines_view[-30:]:
+                    display._append_content(f"  {t.text_secondary}{ln}\033[0m")
+            # loop back to show dialog again
+
+        elif choice == "q":
+            return "quit"
+
+
+# ── Plain-text fallback ───────────────────────────────────────────────────────
+
+def _prompt_plain(handoff_path: Path, task_id: str, current_status: str) -> str:
+    print("\n" + "═" * 70)
+    print("HUMAN INPUT REQUIRED")
+    print("─" * 70)
+    print(f"Task: {task_id}")
+    print(f"Status: {current_status}")
+    print("\nOptions:  r=Respond  e=Edit handoff  v=View  q=Quit")
+    print("─" * 70)
+
+    from agent_coordinator.infrastructure.enhanced_input import enhanced_choice, enhanced_input, enhanced_multiline, Colors
+
+    while True:
+        choice = enhanced_choice(Colors.prompt("Choice [r/e/v/q]: "), choices=["r", "e", "v", "q"])
+
+        if choice == "r":
+            print(Colors.info("\nProvide your guidance (blank line to finish):"))
+            lines: list[str] = []
+            while True:
+                try:
+                    line = input("> ")
+                except (EOFError, KeyboardInterrupt):
+                    break
+                if line == "":
+                    break
+                lines.append(line)
+            response = "\n".join(lines).strip()
+            if not response:
+                print(Colors.warning("No response entered."))
+                continue
+            next_agent = enhanced_input(
+                Colors.prompt("Route to agent [architect/developer/qa_engineer]: "),
+                default="architect",
+            ).strip().lower() or "architect"
+            _write_human_handoff(handoff_path, task_id, response, next_agent)
+            print(Colors.success(f"✓ Response added → {next_agent}"))
+            print("═" * 70)
+            return "continue"
+
+        elif choice == "e":
+            from agent_coordinator.infrastructure.editor import get_editor
+            editor = get_editor()
+            try:
+                subprocess.run([editor, str(handoff_path)], check=True)
+            except Exception as exc:
+                print(f"Editor error: {exc}")
+            print("═" * 70)
+            return "continue"
+
+        elif choice == "v":
+            if handoff_path.exists():
+                print("\n" + "─" * 70)
+                for ln in handoff_path.read_text().splitlines()[-30:]:
+                    print(ln)
+                print("─" * 70)
+            enhanced_input(Colors.prompt("\nPress Enter to continue..."))
+
+        elif choice == "q":
+            print("═" * 70)
+            return "quit"
+
+
+# ── Shared ────────────────────────────────────────────────────────────────────
+
+def _write_human_handoff(handoff_path: Path, task_id: str,
+                          response: str, next_agent: str) -> None:
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    block = f"""
+---HANDOFF---
+ROLE: human
+STATUS: continue
+NEXT: {next_agent}
+TASK_ID: {task_id}
+TITLE: Human response provided
+SUMMARY: Human provided guidance and direction for the workflow to continue.
+
+Human response ({timestamp}):
+{response}
+
+ACCEPTANCE:
+- Agent acknowledges human guidance
+- Agent proceeds accordingly
+
+CONSTRAINTS:
+- Follow human guidance provided above
+---END---
+"""
+    with open(handoff_path, "a") as f:
+        f.write(block)
+
 
 
 def prompt_human_input(handoff_path: Path, task_id: str, current_status: str) -> str:
