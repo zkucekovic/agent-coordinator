@@ -1,0 +1,38 @@
+{
+  "task-001": {
+    "title": "HTML scaffold, canvas, game board, and game loop",
+    "status": "done",
+    "assigned_to": "developer",
+    "depends_on": []
+  },
+  "task-002": {
+    "title": "Tetromino definitions, spawning, and rendering",
+    "status": "done",
+    "assigned_to": "developer",
+    "depends_on": ["task-001"]
+  },
+  "task-003": {
+    "title": "Movement, rotation, collision detection, and wall kicks",
+    "status": "done",
+    "assigned_to": "developer",
+    "depends_on": ["task-002"]
+  },
+  "task-004": {
+    "title": "Line clearing, scoring, and level progression",
+    "status": "done",
+    "assigned_to": "developer",
+    "depends_on": ["task-003"]
+  },
+  "task-005": {
+    "title": "UI — score display, next piece preview, game over, pause",
+    "status": "done",
+    "assigned_to": "developer",
+    "depends_on": ["task-004"]
+  },
+  "task-006": {
+    "title": "Hard drop, polish, and final integration",
+    "status": "done",
+    "assigned_to": "developer",
+    "depends_on": ["task-005"]
+  }
+}
