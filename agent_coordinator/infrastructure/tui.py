@@ -700,13 +700,20 @@ class Screen:
         w = min(self._cols - 4, 72)
         lines = _wrap_text(message, w - 4)
 
-        # Build option bar
-        opt_parts = [f"  [{k}] {label}  " for k, label in options]
-        opt_line = "".join(opt_parts)
+        # Build option rows — flow-wrap into lines that fit inner_w
+        inner_w = w - 2
+        opt_rows: list[list[tuple[str, str]]] = [[]]
+        row_len = 0
+        for k, label in options:
+            part_len = len(f"  [{k}] {label}  ")
+            if opt_rows[-1] and row_len + part_len > inner_w - 2:
+                opt_rows.append([])
+                row_len = 0
+            opt_rows[-1].append((k, label))
+            row_len += part_len
 
         # Box dimensions
-        inner_w = w - 2
-        box_h = 3 + len(lines) + 2 + 1  # top border + title + sep + lines + gap + options + bottom
+        box_h = 3 + len(lines) + 1 + len(opt_rows) + 1  # border+title+sep + msg + sep + opts + border
 
         # Center position
         row0 = max(2, (self._rows - box_h) // 2)
@@ -749,16 +756,17 @@ class Screen:
                    "├" + "─" * inner_w + "┤" + _RESET)
         row += 1
 
-        # Options row
-        opt_vis_len = len(_strip_ansi(opt_line))
-        opt_pad = max(0, inner_w - opt_vis_len - 2)
-        styled_opts = "".join(
-            f"{t.color_agent}[{k}]{_RESET}{t.text_primary} {label}  "
-            for k, label in options
-        )
-        buf.append(_cup(row, col0) + t.bg_status + t.text_primary +
-                   "│ " + styled_opts + " " * opt_pad + "│" + _RESET)
-        row += 1
+        # Options rows
+        for opt_row in opt_rows:
+            styled_opts = "".join(
+                f"{t.color_agent}[{k}]{_RESET}{t.text_primary} {label}  "
+                for k, label in opt_row
+            )
+            plain_len = sum(len(f"[{k}] {label}  ") for k, label in opt_row)
+            opt_pad = max(0, inner_w - plain_len - 2)
+            buf.append(_cup(row, col0) + t.bg_status + t.text_primary +
+                       "│ " + styled_opts + " " * opt_pad + "│" + _RESET)
+            row += 1
 
         # Bottom border
         buf.append(_cup(row, col0) + t.bg_status + t.text_dim +
