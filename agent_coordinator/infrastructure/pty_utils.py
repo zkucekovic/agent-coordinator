@@ -84,9 +84,9 @@ def run_with_pty(
     on_output if provided.  stdin is forwarded from the real terminal so
     the user can respond to permission dialogs.
 
-    Falls back to a plain pipe-based run when PTY is unavailable.
+    Falls back to a plain pipe-based run on platforms without PTY support.
     """
-    if _HAS_PTY and sys.stdin.isatty():
+    if _HAS_PTY:
         return _run_pty(cmd, cwd, env, on_output)
     return _run_pipe(cmd, cwd, env, on_output)
 
@@ -202,7 +202,11 @@ def _run_pty(
 
         Ctrl+C (0x03) is NOT forwarded — Python's SIGINT handler deals
         with it; forwarding it would double-kill the subprocess.
+
+        Does nothing if stdin is not a TTY (e.g. piped or nested session).
         """
+        if not sys.stdin.isatty():
+            return
         while not done.is_set():
             try:
                 r, _, _ = select.select([sys.stdin], [], [], 0.1)
