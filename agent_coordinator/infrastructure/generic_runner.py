@@ -7,12 +7,12 @@ The command template and argument format are configured per-agent in agents.json
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 from typing import Any
 
 from agent_coordinator.application.runner import AgentRunner
 from agent_coordinator.domain.models import RunResult
+from agent_coordinator.infrastructure.pty_utils import run_with_pty
 
 
 class GenericRunner(AgentRunner):
@@ -76,7 +76,7 @@ class GenericRunner(AgentRunner):
             label = f"session {session_id[:12]}…" if session_id else "new session"
             print(f"  → running {tool_name} ({label})")
 
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=workspace)
+        result = run_with_pty(cmd, cwd=workspace, on_output=on_output)
         return self._parse_output(result, session_id)
 
     def _build_cmd(
@@ -118,7 +118,7 @@ class GenericRunner(AgentRunner):
 
     def _parse_output(
         self,
-        result: subprocess.CompletedProcess,
+        result,
         fallback_session_id: str | None,
     ) -> RunResult:
         """Parse output based on configured format."""
@@ -133,7 +133,7 @@ class GenericRunner(AgentRunner):
 
     def _parse_jsonl(
         self,
-        result: subprocess.CompletedProcess,
+        result,
         fallback_session_id: str | None,
     ) -> RunResult:
         """Parse JSON lines output (like opencode)."""
@@ -176,7 +176,7 @@ class GenericRunner(AgentRunner):
 
     def _parse_json(
         self,
-        result: subprocess.CompletedProcess,
+        result,
         fallback_session_id: str | None,
     ) -> RunResult:
         """Parse JSON object output (like claude --print)."""
@@ -205,7 +205,7 @@ class GenericRunner(AgentRunner):
 
     def _parse_text(
         self,
-        result: subprocess.CompletedProcess,
+        result,
         fallback_session_id: str | None,
     ) -> RunResult:
         """Parse plain text output."""
