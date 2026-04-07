@@ -637,64 +637,89 @@ def run_coordinator(workspace: Path, max_turns: int, reset: bool, verbose: bool,
 
             except KeyboardInterrupt:
                 logger.info("KeyboardInterrupt — showing interrupt menu")
-                choice = interrupt_menu.show()
-                if choice == 'q':
-                    logger.info("user quit via interrupt menu")
-                    break
-                elif choice == 't':
-                    # Pause after this turn — enter wait loop
-                    logger.info("user paused execution")
-                    display.set_paused(True)
-                    display._append_content(
-                        f"  {display._theme.color_warning}⏸  Execution paused — Ctrl+C to resume or quit\033[0m"
-                    )
-                    try:
-                        while True:
-                            try:
-                                time.sleep(0.5)
-                            except KeyboardInterrupt:
-                                resume_choice = interrupt_menu.show()
-                                if resume_choice == 'q':
-                                    display.set_paused(False)
-                                    logger.info("user quit from paused state")
-                                    # Use a flag to break outer loop
-                                    raise _QuitSignal()
-                                elif resume_choice == 'c':
-                                    break
-                                elif resume_choice in ('n', 's', 'l', 'w', 'x'):
-                                    _handle_popup_command(resume_choice, workspace, args, display)
-                                # anything else: stay paused
-                    except _QuitSignal:
+                while True:
+                    choice = interrupt_menu.show()
+                    if choice == 'q':
+                        logger.info("user quit via interrupt menu")
                         break
-                    display.set_paused(False)
-                    display._append_content(
-                        f"  {display._theme.color_success}▶  Execution resumed\033[0m"
-                    )
-                    logger.info("user resumed execution")
-                elif choice in ('n', 's', 'l', 'w', 'x'):
-                    # Slash commands from popup
-                    _handle_popup_command(choice, workspace, args, display)
-                elif choice == 'm':
-                    message = interrupt_menu.get_message()
-                    if message:
-                        with open(workspace / "handoff.md", "a") as _f:
-                            _f.write(f"\n\n<!-- Human intervention: {message} -->\n")
-                elif choice == 'e':
-                    if hasattr(display, 'with_editor'):
-                        display.with_editor(workspace / "handoff.md")
-                    else:
-                        from agent_coordinator.infrastructure.editor import get_editor
-                        import subprocess as _sp
+                    elif choice == 'c':
+                        break  # continue execution
+                    elif choice == 'r':
+                        break  # retry — falls through to next iteration
+                    elif choice == 't':
+                        # Pause after this turn — enter wait loop
+                        logger.info("user paused execution")
+                        display.set_paused(True)
+                        display._append_content(
+                            f"  {display._theme.color_warning}⏸  Execution paused — Ctrl+C to resume or quit\033[0m"
+                        )
                         try:
-                            _sp.run([get_editor(), str(workspace / "handoff.md")], check=True)
-                        except Exception as _e:
-                            display._append_content(f"  Editor error: {_e}")
-                elif choice == 'i':
-                    hp = workspace / "handoff.md"
-                    if hp.exists():
-                        for ln in hp.read_text().splitlines()[:30]:
-                            display._append_content("  " + ln)
-                # 'c' and 'r' fall through: 'c' continues, 'r' retries
+                            while True:
+                                try:
+                                    time.sleep(0.5)
+                                except KeyboardInterrupt:
+                                    resume_choice = interrupt_menu.show()
+                                    if resume_choice == 'q':
+                                        display.set_paused(False)
+                                        logger.info("user quit from paused state")
+                                        raise _QuitSignal()
+                                    elif resume_choice == 'c':
+                                        break
+                                    elif resume_choice == 'e':
+                                        if hasattr(display, 'with_editor'):
+                                            display.with_editor(workspace / "handoff.md")
+                                    elif resume_choice == 'i':
+                                        hp = workspace / "handoff.md"
+                                        if hp.exists():
+                                            for ln in hp.read_text().splitlines()[-30:]:
+                                                display._append_content("  " + ln)
+                                    elif resume_choice == 'm':
+                                        message = interrupt_menu.get_message()
+                                        if message:
+                                            with open(workspace / "handoff.md", "a") as _f:
+                                                _f.write(f"\n\n<!-- Human intervention: {message} -->\n")
+                                    elif resume_choice in ('n', 's', 'l', 'w', 'x'):
+                                        _handle_popup_command(resume_choice, workspace, args, display)
+                                    # anything else: stay paused
+                        except _QuitSignal:
+                            break
+                        display.set_paused(False)
+                        display._append_content(
+                            f"  {display._theme.color_success}▶  Execution resumed\033[0m"
+                        )
+                        logger.info("user resumed execution")
+                        break  # resume execution
+                    elif choice in ('n', 's', 'l', 'w', 'x'):
+                        _handle_popup_command(choice, workspace, args, display)
+                        # re-show menu after slash command
+                    elif choice == 'm':
+                        message = interrupt_menu.get_message()
+                        if message:
+                            with open(workspace / "handoff.md", "a") as _f:
+                                _f.write(f"\n\n<!-- Human intervention: {message} -->\n")
+                        # re-show menu
+                    elif choice == 'e':
+                        if hasattr(display, 'with_editor'):
+                            display.with_editor(workspace / "handoff.md")
+                        else:
+                            from agent_coordinator.infrastructure.editor import get_editor
+                            import subprocess as _sp
+                            try:
+                                _sp.run([get_editor(), str(workspace / "handoff.md")], check=True)
+                            except Exception as _e:
+                                display._append_content(f"  Editor error: {_e}")
+                        # re-show menu
+                    elif choice == 'i':
+                        hp = workspace / "handoff.md"
+                        if hp.exists():
+                            for ln in hp.read_text().splitlines()[-30:]:
+                                display._append_content("  " + ln)
+                        # re-show menu
+                    else:
+                        break  # unknown choice — continue execution
+
+                if choice == 'q':
+                    break
 
         else:
             logger.info("max turns reached", extra={"ctx": {"max_turns": max_turns}})
@@ -709,11 +734,23 @@ def run_coordinator(workspace: Path, max_turns: int, reset: bool, verbose: bool,
             title, friendly = _classify_error(exc)
             if lp:
                 friendly += f"\n\nLog: {lp}"
-            display.show_error_dialog(
-                title,
-                friendly,
-                [("q", "Quit")],
-            )
+            while True:
+                err_choice = display.show_error_dialog(
+                    title,
+                    friendly,
+                    [("e", "Edit handoff.md"), ("i", "Inspect handoff.md"), ("q", "Quit")],
+                )
+                if err_choice == "e":
+                    if hasattr(display, 'with_editor'):
+                        display.with_editor(workspace / "handoff.md")
+                    continue
+                if err_choice == "i":
+                    hp = workspace / "handoff.md"
+                    if hp.exists():
+                        for ln in hp.read_text().splitlines()[-30:]:
+                            display._append_content("  " + ln)
+                    continue
+                break
         except Exception:
             pass
         sys.exit(1)
