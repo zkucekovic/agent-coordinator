@@ -38,10 +38,10 @@ from typing import Callable
 
 _ANSI_RE = re.compile(
     r"\033(?:"
-    r"[@-Z\\-_]"                       # two-char ESC sequences
-    r"|\[[0-?]*[ -/]*[@-~]"            # CSI sequences (colours, cursor)
-    r"|\][^\x07]*(?:\x07|\033\\)"      # OSC sequences
+    r"\[[0-?]*[ -/]*[@-~]"            # CSI sequences (colours, cursor)
+    r"|\][^\x07]*(?:\x07|\033\\)"      # OSC sequences (must precede two-char)
     r"|\([A-Z]"                        # character set designation
+    r"|[@-Z\\-_]"                      # two-char ESC sequences
     r")"
 )
 
