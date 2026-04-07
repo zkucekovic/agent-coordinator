@@ -634,7 +634,87 @@ BLOCKERS:
     print(f"Created initial handoff.md in {workspace}")
 
 
-def main() -> None:
+def _execute_startup_action(action: dict, args: argparse.Namespace) -> None:
+    """Execute an action returned by StartupCLI.run()."""
+    kind      = action["action"]
+    workspace = action.get("workspace", Path(DEFAULT_WORKSPACE).resolve())
+
+    if kind == "init":
+        workspace.mkdir(parents=True, exist_ok=True)
+        _create_initial_handoff(workspace)
+        print(f"\n  Workspace initialised: {workspace}")
+        print(f"  Run:  agent-coordinator --workspace {workspace}\n")
+
+    elif kind == "import":
+        from agent_coordinator.helpers.import_plan import import_document
+        source = action["file"]
+        print(f"\n  Importing: {source}")
+        print(f"  Workspace: {workspace}\n")
+        import_document(
+            source_path=source,
+            workspace=workspace,
+            doc_type=action.get("type"),
+            force=action.get("force", False),
+            no_handoff=False,
+            no_tasks=False,
+            verbose=True,
+        )
+        print()
+        # After import ask if user wants to run immediately
+        try:
+            answer = input("  Run coordinator now? [Y/n] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = "n"
+        if answer in ("", "y", "yes"):
+            _run_from_workspace(workspace, args)
+
+    elif kind == "run":
+        _run_from_workspace(workspace, args)
+
+    elif kind == "reset":
+        from agent_coordinator.infrastructure.session_store import SessionStore
+        store = SessionStore(workspace / SESSION_FILE)
+        store.clear()
+        print(f"\n  Session state cleared for: {workspace}\n")
+
+    elif kind == "quit":
+        pass
+
+
+def _run_from_workspace(workspace: Path, args: argparse.Namespace) -> None:
+    """Start the coordinator loop for the given workspace."""
+    if not (workspace / "handoff.md").exists():
+        workspace.mkdir(parents=True, exist_ok=True)
+        _create_initial_handoff(workspace)
+    try:
+        run_coordinator(
+            workspace=workspace,
+            max_turns=args.max_turns,
+            reset=False,
+            verbose=not args.quiet,
+            output_lines=args.output_lines,
+            streaming=not args.no_streaming,
+        )
+    except SystemExit:
+        raise
+    except Exception as exc:
+        from agent_coordinator.infrastructure.diagnostic_log import log_crash, log_path
+        log_crash(exc, context="startup-run")
+        from agent_coordinator.infrastructure.tui import _classify_error
+        title, friendly = _classify_error(exc)
+        w = 60
+        print(f"\n{'═'*w}", file=sys.stderr)
+        print(f"  {title}", file=sys.stderr)
+        for line in friendly.splitlines():
+            print(f"  {line}", file=sys.stderr)
+        lp = log_path()
+        if lp:
+            print(f"  Log: {lp}", file=sys.stderr)
+        print(f"{'═'*w}", file=sys.stderr)
+        sys.exit(1)
+
+
+
     parser = argparse.ArgumentParser(
         description="Orchestrate multi-agent AI workflows via handoff.md",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -680,6 +760,19 @@ Examples:
                         help="Skip creating tasks.json when importing a plan")
 
     args = parser.parse_args()
+
+    # ── Startup CLI (no explicit workspace or import given) ───────────────────
+    _explicit_workspace = "--workspace" in sys.argv or "-w" in sys.argv
+    _has_action = args.import_file or _explicit_workspace or args.reset
+
+    if not _has_action and sys.stdin.isatty():
+        from agent_coordinator.infrastructure.startup_cli import StartupCLI
+        action = StartupCLI().run()
+        if action["action"] == "quit":
+            return
+        _execute_startup_action(action, args)
+        return
+
     workspace = args.workspace.resolve()
 
     # ── Import mode ───────────────────────────────────────────────────────────
