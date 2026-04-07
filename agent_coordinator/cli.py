@@ -679,7 +679,7 @@ def run_coordinator(workspace: Path, max_turns: int, reset: bool, verbose: bool,
                                             with open(workspace / "handoff.md", "a") as _f:
                                                 _f.write(f"\n\n<!-- Human intervention: {message} -->\n")
                                     elif resume_choice in ('n', 's', 'l', 'w', 'x'):
-                                        _handle_popup_command(resume_choice, workspace, args, display)
+                                        _handle_popup_command(resume_choice, workspace, display)
                                     # anything else: stay paused
                         except _QuitSignal:
                             break
@@ -690,7 +690,7 @@ def run_coordinator(workspace: Path, max_turns: int, reset: bool, verbose: bool,
                         logger.info("user resumed execution")
                         break  # resume execution
                     elif choice in ('n', 's', 'l', 'w', 'x'):
-                        _handle_popup_command(choice, workspace, args, display)
+                        _handle_popup_command(choice, workspace, display)
                         # re-show menu after slash command
                     elif choice == 'm':
                         message = interrupt_menu.get_message()
@@ -920,7 +920,7 @@ def _execute_startup_action(action: dict, args: argparse.Namespace) -> None:
             screen.close()
 
 
-def _handle_popup_command(key: str, workspace: Path, args: "argparse.Namespace", display) -> None:
+def _handle_popup_command(key: str, workspace: Path, display) -> None:
     """Handle slash-command keys from the Ctrl+C popup menu."""
     t = display._theme if hasattr(display, "_theme") else None
 
@@ -944,10 +944,10 @@ def _handle_popup_command(key: str, workspace: Path, args: "argparse.Namespace",
         _info(f"Workspace initialised: {new_ws}")
 
     elif key == "s":  # /import-spec
-        _run_import(display, "spec", workspace, args, _info, _warn)
+        _run_import(display, "spec", workspace, _info, _warn)
 
     elif key == "l":  # /import-plan
-        _run_import(display, "plan", workspace, args, _info, _warn)
+        _run_import(display, "plan", workspace, _info, _warn)
 
     elif key == "w":  # /run (switch workspace)
         path_raw = display.read_input("Workspace path: ") if hasattr(display, "read_input") else input("Workspace path: ")
@@ -964,7 +964,7 @@ def _handle_popup_command(key: str, workspace: Path, args: "argparse.Namespace",
         _info(f"Session state cleared for: {workspace}")
 
 
-def _run_import(display, kind: str, workspace: Path, args: "argparse.Namespace", _info, _warn) -> None:
+def _run_import(display, kind: str, workspace: Path, _info, _warn) -> None:
     read = display.read_input if hasattr(display, "read_input") else input
     file_raw = read(f"{kind.capitalize()} file: ")
     if not file_raw:

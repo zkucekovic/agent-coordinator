@@ -203,19 +203,17 @@ class TestHandlePopupCommand(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             ws = Path(tmp) / "ws"
             ws.mkdir()
-            args = _make_args(ws)
             display = _make_display()
-            _handle_popup_command("x", ws, args, display)
+            _handle_popup_command("x", ws, display)
             display._append_content.assert_called()
 
     def test_reset_command_does_not_raise(self):
         with TemporaryDirectory() as tmp:
             ws = Path(tmp) / "ws"
             ws.mkdir()
-            args = _make_args(ws)
             display = _make_display()
             # Should not raise even if session file doesn't exist
-            _handle_popup_command("x", ws, args, display)
+            _handle_popup_command("x", ws, display)
 
 
 class TestExecuteStartupAction(unittest.TestCase):
