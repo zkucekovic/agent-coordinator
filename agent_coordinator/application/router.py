@@ -18,7 +18,7 @@ _TERMINAL_STATUSES: frozenset[HandoffStatus] = frozenset({
 })
 
 # NEXT values that mean no agent should be invoked.
-_STOP_NEXT_VALUES: frozenset[str] = frozenset({"none", "human"})
+_STOP_NEXT_VALUES: frozenset[str] = frozenset({"none", "done", "human"})
 
 
 @dataclass(frozen=True)
@@ -51,7 +51,7 @@ class WorkflowRouter:
 
         next_actor = message.next.lower().strip()
 
-        if next_actor == "none":
+        if next_actor in ("none", "done"):
             return RoutingDecision(
                 next_actor="none",
                 is_terminal=True,

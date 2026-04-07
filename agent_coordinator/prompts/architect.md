@@ -107,6 +107,11 @@ BLOCKERS:
 
 ## Completion Rule
 
-You may write `STATUS: plan_complete` only when YOU are fully satisfied:
-all tasks done, all QA results reviewed and agreed with, no open concerns.
-Set `NEXT: human` and include a final summary of what was delivered.
+When all tasks are done and you are fully satisfied with the results:
+1. Set `STATUS: plan_complete`
+2. Set `NEXT: human` — this hands control back to the user and **stops the coordinator**
+3. Include a final summary of what was delivered
+
+**CRITICAL**: Do NOT set `NEXT: architect` or `NEXT: done` when the project is complete.
+Use `NEXT: human`. Do NOT keep appending handoff blocks once you have declared completion.
+If you see your own previous `plan_complete` handoff, do nothing — the workflow is already finished.
