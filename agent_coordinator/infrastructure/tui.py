@@ -680,11 +680,12 @@ class Screen:
         self._agent_states[agent] = state
         # status bar will be updated on next animation tick or content append
 
-    def show_error_dialog(self, title: str, message: str, options: list[tuple[str, str]]) -> str:
+    def show_error_dialog(self, title: str, message: str, options: list[tuple[str, str]], *, icon: str = "⚠") -> str:
         """
         Render a centered modal dialog and return the chosen option key.
 
         options: list of (key, label) e.g. [("r", "Retry"), ("e", "Edit agents.json"), ("q", "Quit")]
+        icon: character to show before the title (default "⚠", use "" for none)
         Returns the chosen key (lowercased).
         """
         if not self._active:
@@ -722,12 +723,14 @@ class Screen:
 
         row = row0
         # Top border + title
+        icon_prefix = f"{icon}  " if icon else ""
+        title_display = f"{icon_prefix}{title}"
         buf.append(_cup(row, col0) + t.bg_status + t.color_warning + _BOLD +
                    "┌" + "─" * inner_w + "┐" + _RESET)
         row += 1
-        title_pad = max(0, inner_w - len(title) - 2)
+        title_pad = max(0, inner_w - len(title_display) - 2)
         buf.append(_cup(row, col0) + t.bg_status + t.color_warning + _BOLD +
-                   f"│ ⚠  {title}" + " " * title_pad + "│" + _RESET)
+                   f"│ {title_display}" + " " * title_pad + "│" + _RESET)
         row += 1
         buf.append(_cup(row, col0) + t.bg_status + t.text_dim +
                    "├" + "─" * inner_w + "┤" + _RESET)

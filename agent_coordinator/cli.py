@@ -327,7 +327,81 @@ def handle_interrupt(workspace: Path, handoff_path: Path) -> str:
     return choice
 
 
-def run_coordinator(workspace: Path, max_turns: int, reset: bool, verbose: bool, output_lines: int = 10, streaming: bool = True, display=None) -> None:
+def _show_startup_popup(display, workspace: Path) -> str:
+    """Show a startup popup inside the TUI. Returns the chosen action key.
+
+    Uses the same dialog rendering as show_error_dialog.
+    """
+    from agent_coordinator.infrastructure.tui import Screen
+
+    if not isinstance(display, Screen) or not display._active:
+        return "r"
+
+    handoff_path = workspace / "handoff.md"
+    status_line = ""
+    if handoff_path.exists():
+        text = handoff_path.read_text(errors="replace")
+        lines = text.splitlines()
+        status_l = next((l for l in reversed(lines) if l.startswith("STATUS:")), None)
+        next_l = next((l for l in reversed(lines) if l.startswith("NEXT:")), None)
+        parts = []
+        if status_l:
+            parts.append(status_l.split(":", 1)[1].strip())
+        if next_l:
+            parts.append("next → " + next_l.split(":", 1)[1].strip())
+        if parts:
+            status_line = "  ".join(parts)
+    else:
+        status_line = "no handoff.md — will be created"
+
+    summary = f"Workspace: {workspace.name}\n{status_line}" if status_line else f"Workspace: {workspace.name}"
+
+    options = [
+        ("r", "Run / continue"),
+        ("i", "Inspect handoff.md"),
+        ("e", "Edit handoff.md"),
+        ("s", "Reset sessions"),
+        ("q", "Quit"),
+    ]
+
+    choice = display.show_error_dialog("AGENT COORDINATOR", summary, options, icon="▶")
+
+    if choice == "i":
+        if handoff_path.exists():
+            content = handoff_path.read_text(errors="replace")
+            last_block_start = content.rfind("---HANDOFF---")
+            if last_block_start >= 0:
+                block = content[last_block_start:]
+                for line in block.splitlines()[:20]:
+                    display._append_content(f"  {display._theme.text_secondary}{line}\033[0m")
+            else:
+                display._append_content(f"  {display._theme.text_dim}(no handoff block found)\033[0m")
+        else:
+            display._append_content(f"  {display._theme.text_dim}handoff.md does not exist yet\033[0m")
+        display._append_content("")
+        return _show_startup_popup(display, workspace)
+
+    if choice == "e":
+        if hasattr(display, "with_editor"):
+            display.with_editor(handoff_path)
+        return _show_startup_popup(display, workspace)
+
+    if choice == "s":
+        from agent_coordinator.infrastructure.session_store import SessionStore
+        store = SessionStore(workspace / SESSION_FILE)
+        store.clear()
+        display._append_content(
+            f"  {display._theme.color_success}✓  Sessions cleared\033[0m"
+        )
+        display._append_content("")
+        return _show_startup_popup(display, workspace)
+
+    return choice
+
+    return choice
+
+
+def run_coordinator(workspace: Path, max_turns: int, reset: bool, verbose: bool, output_lines: int = 10, streaming: bool = True, display=None, auto: bool = False) -> None:
     log = setup_log(workspace)
     logger = get_logger()
     logger.info("run_coordinator start", extra={"ctx": {
@@ -391,6 +465,13 @@ def run_coordinator(workspace: Path, max_turns: int, reset: bool, verbose: bool,
         workspace=str(workspace),
         max_turns=max_turns,
     )
+
+    # ── Startup popup (unless --auto) ─────────────────────────────────────
+    if not auto:
+        action = _show_startup_popup(display, workspace)
+        if action == "q":
+            display.close()
+            return
 
     try:
         while total_turns < max_turns:
@@ -933,6 +1014,8 @@ Examples:
                         help="Lines of agent output to show in the TUI window (default: 10)")
     parser.add_argument("--no-streaming", action="store_true",
                         help="Print agent output all at once instead of streaming it")
+    parser.add_argument("--auto", action="store_true",
+                        help="Skip the startup menu and run immediately")
 
     # ── Import arguments ──────────────────────────────────────────────────────
     parser.add_argument("--import", dest="import_file", type=Path, metavar="FILE",
@@ -990,6 +1073,7 @@ Examples:
             verbose=not args.quiet,
             output_lines=args.output_lines,
             streaming=not args.no_streaming,
+            auto=args.auto,
         )
     except SystemExit:
         raise
