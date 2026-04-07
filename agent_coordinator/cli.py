@@ -519,6 +519,28 @@ def run_coordinator(workspace: Path, max_turns: int, reset: bool, verbose: bool,
                 if choice == 'q':
                     logger.info("user quit via interrupt menu")
                     break
+                elif choice in ('n', 's', 'p', 'w', 'x'):
+                    # Slash commands from popup — run via startup action helpers
+                    _handle_popup_command(choice, workspace, args, display)
+                elif choice == 'm':
+                    message = interrupt_menu.get_message()
+                    if message:
+                        with open(workspace / "handoff.md", "a") as _f:
+                            _f.write(f"\n\n<!-- Human intervention: {message} -->\n")
+                elif choice == 'e':
+                    from agent_coordinator.infrastructure.editor import get_editor
+                    import subprocess as _sp
+                    editor = get_editor()
+                    try:
+                        _sp.run([editor, str(workspace / "handoff.md")], check=True)
+                    except Exception as _e:
+                        display._append_content(f"  Editor error: {_e}")
+                elif choice == 'i':
+                    hp = workspace / "handoff.md"
+                    if hp.exists():
+                        for ln in hp.read_text().splitlines()[:30]:
+                            display._append_content("  " + ln)
+                # 'c' and 'r' fall through: 'c' continues, 'r' retries (loop continues)
 
         else:
             logger.info("max turns reached", extra={"ctx": {"max_turns": max_turns}})
@@ -707,6 +729,77 @@ def _execute_startup_action(action: dict, args: argparse.Namespace) -> None:
             screen.close()
 
 
+def _handle_popup_command(key: str, workspace: Path, args: "argparse.Namespace", display) -> None:
+    """Handle slash-command keys from the Ctrl+C popup menu."""
+    t = display._theme if hasattr(display, "_theme") else None
+
+    def _info(msg: str) -> None:
+        if t and hasattr(display, "_append_content"):
+            display._append_content(f"  {t.color_success}{msg}\033[0m")
+        else:
+            print(f"  {msg}")
+
+    def _warn(msg: str) -> None:
+        if t and hasattr(display, "_append_content"):
+            display._append_content(f"  {t.color_warning}⚠  {msg}\033[0m")
+        else:
+            print(f"  ⚠  {msg}", file=sys.stderr)
+
+    if key == "n":   # /init
+        path_raw = display.read_input("Workspace path: ") if hasattr(display, "read_input") else input("Workspace path: ")
+        new_ws = Path(path_raw).resolve() if path_raw else workspace
+        new_ws.mkdir(parents=True, exist_ok=True)
+        _create_initial_handoff(new_ws)
+        _info(f"Workspace initialised: {new_ws}")
+
+    elif key == "s":  # /import-spec
+        _run_import(display, "spec", workspace, args, _info, _warn)
+
+    elif key == "p":  # /import-plan
+        _run_import(display, "plan", workspace, args, _info, _warn)
+
+    elif key == "w":  # /run (switch workspace)
+        path_raw = display.read_input("Workspace path: ") if hasattr(display, "read_input") else input("Workspace path: ")
+        if path_raw:
+            new_ws = Path(path_raw).resolve()
+            _info(f"Switching to {new_ws} — restart required (use --workspace)")
+        else:
+            _warn("No path entered — staying on current workspace")
+
+    elif key == "x":  # /reset
+        from agent_coordinator.infrastructure.session_store import SessionStore
+        store = SessionStore(workspace / SESSION_FILE)
+        store.clear()
+        _info(f"Session state cleared for: {workspace}")
+
+
+def _run_import(display, kind: str, workspace: Path, args: "argparse.Namespace", _info, _warn) -> None:
+    read = display.read_input if hasattr(display, "read_input") else input
+    file_raw = read(f"{kind.capitalize()} file: ")
+    if not file_raw:
+        _warn("No file entered")
+        return
+    src = Path(file_raw).resolve()
+    if not src.exists():
+        _warn(f"File not found: {src}")
+        return
+    ws_raw = read("Workspace path: ")
+    ws = Path(ws_raw).resolve() if ws_raw else workspace
+    ws.mkdir(parents=True, exist_ok=True)
+    _info(f"Importing {src} → {ws} …")
+    from agent_coordinator.helpers.import_plan import import_document
+    import_document(
+        source_path=src,
+        workspace=ws,
+        doc_type=kind,
+        force=False,
+        no_handoff=False,
+        no_tasks=False,
+        verbose=False,
+    )
+    _info("Import complete")
+
+
 def _run_from_workspace(workspace: Path, args: argparse.Namespace, display=None) -> None:
     """Start the coordinator loop for the given workspace."""
     if not (workspace / "handoff.md").exists():
@@ -785,17 +878,6 @@ Examples:
     # ── Startup CLI (no explicit workspace or import given) ───────────────────
     _explicit_workspace = "--workspace" in sys.argv or "-w" in sys.argv
     _has_action = args.import_file or _explicit_workspace or args.reset
-
-    if not _has_action and sys.stdin.isatty():
-        from agent_coordinator.infrastructure.tui import create_display
-        from agent_coordinator.infrastructure.startup_cli import StartupCLI
-        screen = create_display()
-        action = StartupCLI(screen=screen).run()
-        if action["action"] == "quit":
-            screen.close()
-            return
-        _execute_startup_action(action, args)
-        return
 
     workspace = args.workspace.resolve()
 

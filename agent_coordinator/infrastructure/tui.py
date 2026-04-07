@@ -815,95 +815,192 @@ class SimpleProgressDisplay:
 # ── Interrupt menu ────────────────────────────────────────────────────────────
 
 class InterruptMenu:
-    """Interactive menu shown on Ctrl+C.
+    """Ctrl+C menu rendered as a centered popup inside the alt-screen.
 
-    Temporarily exits the alternate screen so the user can read / type freely,
-    then re-enters and re-renders on return.
+    All interaction happens without leaving alternate screen.
+    Falls back to plain text when not in alt-screen mode.
     """
 
-    def __init__(self, display: Screen | SimpleProgressDisplay | None = None) -> None:
+    _ITEMS = [
+        ("c", "Continue execution"),
+        ("r", "Retry current turn"),
+        ("e", "Edit handoff.md"),
+        ("m", "Add message to handoff"),
+        ("i", "Inspect handoff.md"),
+        ("─", ""),
+        ("n", "/init  — initialize workspace"),
+        ("s", "/import-spec  — import specification"),
+        ("p", "/import-plan  — import plan"),
+        ("w", "/run  — switch workspace"),
+        ("x", "/reset  — clear session state"),
+        ("─", ""),
+        ("q", "Quit"),
+    ]
+
+    def __init__(self, display: "Screen | SimpleProgressDisplay | None" = None) -> None:
         self._display = display
 
-    def _pause_alt(self) -> None:
-        if isinstance(self._display, Screen) and self._display._active:
-            # Restore echo so the user can type in the menu
-            if _HAS_TERMIOS and self._display._orig_termios is not None:
-                try:
-                    termios.tcsetattr(
-                        sys.stdin.fileno(), termios.TCSANOW,
-                        self._display._orig_termios,
-                    )
-                except termios.error:
-                    pass
-            self._display._write(_SHOW_CURSOR + _ALT_EXIT)
-
-    def _resume_alt(self) -> None:
-        if isinstance(self._display, Screen) and self._display._active:
-            self._display._write(_ALT_ENTER + _HIDE_CURSOR)
-            # Re-disable echo
-            if _HAS_TERMIOS and self._display._orig_termios is not None:
-                try:
-                    new = termios.tcgetattr(sys.stdin.fileno())
-                    new[3] &= ~(termios.ECHO | termios.ECHOE | termios.ECHOK | termios.ICANON)
-                    termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, new)
-                except termios.error:
-                    pass
-            self._display._full_render()
-
-    def _p(self, text: str = "") -> None:
-        sys.stdout.write(text + "\n")
-        sys.stdout.flush()
+    # ── Public API ────────────────────────────────────────────────────────────
 
     def show(self) -> str:
-        self._pause_alt()
-        w = shutil.get_terminal_size().columns
-        self._p()
-        self._p("═" * w)
-        self._p("  INTERRUPTED  (Ctrl+C)")
-        self._p("─" * w)
-        self._p()
-        self._p("  c  continue execution")
-        self._p("  r  retry current turn")
-        self._p("  e  edit handoff.md in editor")
-        self._p("  m  add message to handoff")
-        self._p("  i  inspect handoff.md")
-        self._p("  q  quit")
-        self._p()
-        self._p("─" * w)
-
-        from agent_coordinator.infrastructure.enhanced_input import enhanced_choice, Colors
-        try:
-            choice = enhanced_choice(
-                Colors.prompt("Choice [c/r/e/m/i/q]: "),
-                choices=["c", "r", "e", "m", "i", "q"],
-                default=None,
-            )
-        except (EOFError, KeyboardInterrupt):
-            choice = "q"
-
-        self._p("═" * w)
-        self._p()
-        self._resume_alt()
-        return choice
+        """Show popup menu; return chosen action key."""
+        if not isinstance(self._display, Screen) or not self._display._active:
+            return self._show_plain()
+        return self._show_popup()
 
     def get_message(self, use_editor: bool = True) -> str:
-        self._pause_alt()
+        """Collect a free-text message from the user."""
+        if not isinstance(self._display, Screen) or not self._display._active:
+            return self._get_message_plain(use_editor)
+        return self._display.read_input("Message: ")
+
+    # ── Popup implementation ──────────────────────────────────────────────────
+
+    def _show_popup(self) -> str:
+        scr = self._display
+        t   = scr._theme
+
+        # Build the visible rows
+        title  = "INTERRUPTED"
+        rows: list[tuple[str, str]] = []          # (key_display, description)
+        valid: set[str] = set()
+
+        for key, desc in self._ITEMS:
+            if key == "─":
+                rows.append(("─", ""))
+            else:
+                rows.append((key, desc))
+                valid.add(key.lower())
+
+        # Box geometry
+        key_col  = max(len(k) for k, _ in rows if k != "─") + 2
+        desc_col = max(len(d) for _, d in rows)
+        inner_w  = max(key_col + desc_col + 4, len(title) + 6)
+        inner_w  = min(inner_w, scr._cols - 6)
+        w        = inner_w + 2   # includes │ borders
+        box_h    = 2 + len(rows) + 2   # top border + title + sep + rows + bottom
+
+        row0 = max(2, (scr._rows - box_h) // 2)
+        col0 = max(1, (scr._cols - w) // 2)
+
+        def _border(char: str) -> str:
+            return _cup(row0 + char_row, col0) + t.bg_status + t.text_dim + char + _RESET
+
+        buf: list[str] = []
+        buf.append(_sc())
+
+        # Top border + title
+        char_row = 0
+        title_pad = inner_w - len(title) - 2
+        buf.append(
+            _cup(row0, col0) + t.bg_status + t.color_agent + _BOLD
+            + "┌" + "─" * inner_w + "┐" + _RESET
+        )
+        char_row = 1
+        buf.append(
+            _cup(row0 + char_row, col0) + t.bg_status + t.color_agent + _BOLD
+            + f"│ {title}" + " " * title_pad + "│" + _RESET
+        )
+        char_row = 2
+        buf.append(
+            _cup(row0 + char_row, col0) + t.bg_status + t.text_dim
+            + "├" + "─" * inner_w + "┤" + _RESET
+        )
+
+        # Menu rows
+        for i, (key, desc) in enumerate(rows):
+            char_row = 3 + i
+            if key == "─":
+                buf.append(
+                    _cup(row0 + char_row, col0) + t.bg_status + t.text_dim
+                    + "├" + "─" * inner_w + "┤" + _RESET
+                )
+                continue
+            k_display = key if key.startswith("/") else f"[{key}]"
+            k_styled  = t.color_success + _BOLD + k_display + _RESET
+            k_vis     = len(k_display)
+            gap       = inner_w - k_vis - len(desc) - 4
+            row_text  = f"  {k_styled}  {t.text_secondary}{desc}{t.text_dim}{' ' * max(0,gap)}"
+            vis_len   = k_vis + 2 + len(desc) + 2 + max(0, gap)
+            pad       = max(0, inner_w - vis_len)
+            buf.append(
+                _cup(row0 + char_row, col0) + t.bg_status
+                + "│" + row_text + " " * pad + t.text_dim + "│" + _RESET
+            )
+
+        # Bottom border
+        char_row = 3 + len(rows)
+        buf.append(
+            _cup(row0 + char_row, col0) + t.bg_status + t.text_dim
+            + "└" + "─" * inner_w + "┘" + _RESET
+        )
+
+        scr._write("".join(buf))
+
+        # Read keypress (ICANON off → each char arrives immediately)
+        choice = ""
+        while True:
+            try:
+                ch = sys.stdin.read(1)
+            except (EOFError, OSError):
+                choice = "q"
+                break
+            cl = ch.lower()
+            if cl in valid:
+                choice = cl
+                break
+
+        # Erase popup
+        erase: list[str] = []
+        for r in range(row0, row0 + char_row + 1):
+            erase.append(_cup(r, col0) + " " * w)
+        erase.append(_rc())
+        scr._write("".join(erase))
+        scr._full_render()
+        return choice
+
+    # ── Plain-text fallback (non-TTY / no alt-screen) ─────────────────────────
+
+    def _show_plain(self) -> str:
+        w = shutil.get_terminal_size().columns
+        print()
+        print("═" * w)
+        print("  INTERRUPTED  (Ctrl+C)")
+        print("─" * w)
+        for key, desc in self._ITEMS:
+            if key == "─":
+                print("─" * w)
+            else:
+                print(f"  {key:<15} {desc}")
+        print("═" * w)
+        sys.stdout.flush()
+        try:
+            from agent_coordinator.infrastructure.enhanced_input import enhanced_choice, Colors
+            valid = []
+            for key, _ in self._ITEMS:
+                if key != "─":
+                    valid.append(key[0] if key.startswith("/") else key.lower())
+            choice = enhanced_choice(Colors.prompt("Choice: "), choices=valid, default="c")
+        except (EOFError, KeyboardInterrupt):
+            choice = "q"
+        return choice
+
+    def _get_message_plain(self, use_editor: bool = True) -> str:
         msg = ""
         if use_editor and sys.stdin.isatty():
             from agent_coordinator.infrastructure.editor import edit_handoff_message
-            self._p("\nOpening editor for your message...")
+            print("\nOpening editor for your message...")
             try:
                 msg = edit_handoff_message()
             except Exception as e:
-                self._p(f"Editor error: {e}")
+                print(f"Editor error: {e}")
         if not msg:
             from agent_coordinator.infrastructure.enhanced_input import enhanced_multiline, Colors
-            self._p()
+            print()
             msg = enhanced_multiline(
                 Colors.info("Enter message (empty line to finish):"),
                 Colors.prompt("> "),
             )
-        self._resume_alt()
         return msg
 
 
