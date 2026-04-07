@@ -34,7 +34,7 @@ from agent_coordinator.infrastructure.task_repository import JsonTaskRepository
 
 COORDINATOR_DIR = Path(__file__).parent.resolve()
 DEFAULT_WORKSPACE = Path.cwd() / "workspace"
-DEFAULT_MAX_TURNS = 30
+DEFAULT_MAX_TURNS = 0  # 0 means unlimited
 DEFAULT_HANDOFF_RETRIES = 1
 SESSION_FILE = ".coordinator_sessions.json"
 EVENT_LOG_FILE = "workflow_events.jsonl"
@@ -474,7 +474,7 @@ def run_coordinator(workspace: Path, max_turns: int, reset: bool, verbose: bool,
             return
 
     try:
-        while total_turns < max_turns:
+        while max_turns == 0 or total_turns < max_turns:
             try:
                 message = handoff_reader.read()
                 if message is None:
@@ -810,7 +810,7 @@ def _open_in_editor(path: Path) -> None:
 def _print_header(workspace: Path, max_turns: int, agents: dict) -> None:
     print(f"\n{'─'*60}")
     print(f"  Coordination workspace: {workspace}")
-    print(f"  Max turns:  {max_turns}")
+    print(f"  Max turns:  {'unlimited' if max_turns == 0 else max_turns}")
     print(f"  Agents:     {', '.join(agents.keys())}")
     print(f"{'─'*60}\n")
 
@@ -1042,7 +1042,7 @@ Examples:
     parser.add_argument("--workspace", type=Path, default=DEFAULT_WORKSPACE,
                         help="Directory containing handoff.md and project files (default: workspace/)")
     parser.add_argument("--max-turns", type=int, default=DEFAULT_MAX_TURNS,
-                        help="Maximum agent turns before stopping (default: 30)")
+                        help="Maximum agent turns before stopping (0 = unlimited, default: 0)")
     parser.add_argument("--reset", action="store_true",
                         help="Clear saved session IDs and start fresh")
     parser.add_argument("--quiet", action="store_true",

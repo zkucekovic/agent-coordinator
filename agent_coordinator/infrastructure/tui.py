@@ -1036,7 +1036,8 @@ class SimpleProgressDisplay:
     def start_run(self, agents: list[str], workspace: str, max_turns: int) -> None:
         w = shutil.get_terminal_size().columns
         self._p(f"\n{'─'*w}")
-        self._p(f"  AGENT COORDINATOR  workspace={workspace}  max_turns={max_turns}")
+        turns_display = "unlimited" if max_turns == 0 else str(max_turns)
+        self._p(f"  AGENT COORDINATOR  workspace={workspace}  max_turns={turns_display}")
         self._p("─" * w)
 
     def start_agent_turn(self, agent: str, backend: str, task_id: str, status: str) -> None:
