@@ -293,7 +293,7 @@ def handle_interrupt(workspace: Path, handoff_path: Path) -> str:
     return choice
 
 
-def run_coordinator(workspace: Path, max_turns: int, reset: bool, verbose: bool, output_lines: int = 10, streaming: bool = True) -> None:
+def run_coordinator(workspace: Path, max_turns: int, reset: bool, verbose: bool, output_lines: int = 10, streaming: bool = True, display=None) -> None:
     log = setup_log(workspace)
     logger = get_logger()
     logger.info("run_coordinator start", extra={"ctx": {
@@ -314,7 +314,15 @@ def run_coordinator(workspace: Path, max_turns: int, reset: bool, verbose: bool,
     builder = PromptBuilder(coordinator_dir=COORDINATOR_DIR)
 
     from agent_coordinator.infrastructure.tui import create_display, InterruptMenu
-    display = create_display(theme=config.get("theme"))
+    if display is None:
+        display = create_display(theme=config.get("theme"))
+    else:
+        # Reuse the screen that was already open (e.g. from startup menu).
+        # Re-apply theme if specified, but don't create a new screen.
+        from agent_coordinator.infrastructure.tui import get_theme
+        theme_name = config.get("theme")
+        if theme_name:
+            display._theme = get_theme(theme_name)
     display.max_output_lines = output_lines
     if not streaming:
         display.stream_delay = 0
@@ -638,18 +646,29 @@ def _execute_startup_action(action: dict, args: argparse.Namespace) -> None:
     """Execute an action returned by StartupCLI.run()."""
     kind      = action["action"]
     workspace = action.get("workspace", Path(DEFAULT_WORKSPACE).resolve())
+    screen    = action.get("screen")   # may be None for non-TUI paths
 
     if kind == "init":
         workspace.mkdir(parents=True, exist_ok=True)
         _create_initial_handoff(workspace)
-        print(f"\n  Workspace initialised: {workspace}")
-        print(f"  Run:  agent-coordinator --workspace {workspace}\n")
+        if screen:
+            t = screen._theme
+            screen._append_content(f"  {t.color_success}✓  Workspace initialised: {workspace}\033[0m")
+            screen._append_content(f"  {t.text_dim}Run /run {workspace} to start\033[0m")
+        else:
+            print(f"\n  Workspace initialised: {workspace}")
+            print(f"  Run:  agent-coordinator --workspace {workspace}\n")
 
     elif kind == "import":
         from agent_coordinator.helpers.import_plan import import_document
         source = action["file"]
-        print(f"\n  Importing: {source}")
-        print(f"  Workspace: {workspace}\n")
+        if screen:
+            t = screen._theme
+            screen._append_content(f"  {t.text_dim}Importing: {source}\033[0m")
+            screen._append_content(f"  {t.text_dim}Workspace: {workspace}\033[0m")
+        else:
+            print(f"\n  Importing: {source}")
+            print(f"  Workspace: {workspace}\n")
         import_document(
             source_path=source,
             workspace=workspace,
@@ -657,31 +676,38 @@ def _execute_startup_action(action: dict, args: argparse.Namespace) -> None:
             force=action.get("force", False),
             no_handoff=False,
             no_tasks=False,
-            verbose=True,
+            verbose=not bool(screen),
         )
-        print()
         # After import ask if user wants to run immediately
-        try:
-            answer = input("  Run coordinator now? [Y/n] ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            answer = "n"
-        if answer in ("", "y", "yes"):
-            _run_from_workspace(workspace, args)
+        if screen:
+            answer = screen.read_input("Run coordinator now? [Y/n] ")
+        else:
+            try:
+                answer = input("  Run coordinator now? [Y/n] ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                answer = "n"
+        if answer.lower() in ("", "y", "yes"):
+            _run_from_workspace(workspace, args, display=screen)
 
     elif kind == "run":
-        _run_from_workspace(workspace, args)
+        _run_from_workspace(workspace, args, display=screen)
 
     elif kind == "reset":
         from agent_coordinator.infrastructure.session_store import SessionStore
         store = SessionStore(workspace / SESSION_FILE)
         store.clear()
-        print(f"\n  Session state cleared for: {workspace}\n")
+        if screen:
+            t = screen._theme
+            screen._append_content(f"  {t.color_success}✓  Session state cleared for: {workspace}\033[0m")
+        else:
+            print(f"\n  Session state cleared for: {workspace}\n")
 
     elif kind == "quit":
-        pass
+        if screen and screen._active:
+            screen.close()
 
 
-def _run_from_workspace(workspace: Path, args: argparse.Namespace) -> None:
+def _run_from_workspace(workspace: Path, args: argparse.Namespace, display=None) -> None:
     """Start the coordinator loop for the given workspace."""
     if not (workspace / "handoff.md").exists():
         workspace.mkdir(parents=True, exist_ok=True)
@@ -694,6 +720,7 @@ def _run_from_workspace(workspace: Path, args: argparse.Namespace) -> None:
             verbose=not args.quiet,
             output_lines=args.output_lines,
             streaming=not args.no_streaming,
+            display=display,
         )
     except SystemExit:
         raise
@@ -760,9 +787,12 @@ Examples:
     _has_action = args.import_file or _explicit_workspace or args.reset
 
     if not _has_action and sys.stdin.isatty():
+        from agent_coordinator.infrastructure.tui import create_display
         from agent_coordinator.infrastructure.startup_cli import StartupCLI
-        action = StartupCLI().run()
+        screen = create_display()
+        action = StartupCLI(screen=screen).run()
         if action["action"] == "quit":
+            screen.close()
             return
         _execute_startup_action(action, args)
         return

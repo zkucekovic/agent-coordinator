@@ -262,6 +262,86 @@ class Screen:
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
+    def start_menu(self) -> None:
+        """Enter alt-screen for the startup menu (no agents, no turn counter)."""
+        if not self._stream.isatty():
+            return
+        self._agents = []
+        self._workspace = ""
+        self._max_turns = 0
+        self._agent_states = {}
+        self._refresh_size()
+        self._active = True
+        if _HAS_TERMIOS and sys.stdin.isatty():
+            try:
+                self._orig_termios = termios.tcgetattr(sys.stdin.fileno())
+                new = termios.tcgetattr(sys.stdin.fileno())
+                new[3] &= ~(termios.ECHO | termios.ECHOE | termios.ECHOK | termios.ICANON)
+                termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, new)
+            except termios.error:
+                self._orig_termios = None
+        self._write(_ALT_ENTER + _HIDE_CURSOR)
+        self._full_render()
+        try:
+            self._orig_sigwinch = signal.signal(signal.SIGWINCH, self._on_resize)
+        except (OSError, ValueError):
+            pass
+        self._anim_stop.clear()
+        self._anim_thread = threading.Thread(target=self._animate, daemon=True)
+        self._anim_thread.start()
+
+    def read_input(self, prompt: str) -> str:
+        """
+        Read a line of input from the user, rendered inside the alt-screen.
+
+        Temporarily re-enables echo + canonical mode, draws the prompt at the
+        bottom of the content area, reads until Enter, then re-disables.
+        Returns the stripped input string, or "" on EOF/interrupt.
+        """
+        if not self._active:
+            try:
+                return input(prompt)
+            except (EOFError, KeyboardInterrupt):
+                return ""
+
+        t = self._theme
+        prompt_row = self._rows - self._SEP_ROWS - self._STATUS_ROWS - 1
+
+        # Re-enable echo + canonical for a normal input read
+        if _HAS_TERMIOS and self._orig_termios is not None:
+            try:
+                termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, self._orig_termios)
+            except termios.error:
+                pass
+
+        self._write(_SHOW_CURSOR)
+        # Draw prompt line above separator
+        prompt_render = (
+            _cup(prompt_row, 1)
+            + t.bg_status + _el()
+            + t.color_agent + _BOLD + "  ❯ " + _RESET
+            + t.text_primary + prompt
+        )
+        self._write(prompt_render)
+
+        try:
+            value = input()
+        except (EOFError, KeyboardInterrupt):
+            value = ""
+
+        # Clear prompt row and re-disable echo
+        self._write(_cup(prompt_row, 1) + _el())
+        self._write(_HIDE_CURSOR)
+        if _HAS_TERMIOS and self._orig_termios is not None:
+            try:
+                new = termios.tcgetattr(sys.stdin.fileno())
+                new[3] &= ~(termios.ECHO | termios.ECHOE | termios.ECHOK | termios.ICANON)
+                termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, new)
+            except termios.error:
+                pass
+
+        return value.strip()
+
     def start_run(
         self,
         agents: list[str],
