@@ -15,6 +15,9 @@ Public API (unchanged from previous versions so cli.py needs no edits):
     menu = InterruptMenu(display)
     choice = menu.show()
 
+    popup = Popup(display)                             # reusable modal dialog
+    choice = popup.show(title="…", body="…", options=[("r", "Run")])
+
 Layout (inside alternate screen)
 ─────────────────────────────────
   row 1          : top header bar  (static)
@@ -212,6 +215,290 @@ def _state_color(state: AgentState, theme: Theme) -> str:
         AgentState.ERROR:   theme.led_error,
         AgentState.BLOCKED: theme.led_blocked,
     }[state]
+
+
+# ── Popup ─────────────────────────────────────────────────────────────────────
+
+class Popup:
+    """Reusable centered modal popup for the alt-screen TUI.
+
+    Handles all box-drawing alignment math in one place.  Supports two
+    layout modes that can be combined:
+
+    * **options** – horizontal flow-wrapped key/label pairs
+      (like the error-recovery dialog)
+    * **items** – vertical one-per-row entries with separator support
+      (like the Ctrl+C interrupt menu)
+
+    Usage::
+
+        popup = Popup(screen)
+        choice = popup.show(
+            title="AGENT COORDINATOR",
+            icon="▶",
+            body="Workspace: examples",
+            options=[("r", "Run"), ("q", "Quit")],
+        )
+    """
+
+    def __init__(self, screen: "Screen") -> None:
+        self._scr = screen
+
+    # ── Public ────────────────────────────────────────────────────────────────
+
+    def show(
+        self,
+        *,
+        title: str,
+        icon: str = "",
+        body: str | list[str] = "",
+        options: list[tuple[str, str]] | None = None,
+        items: list[tuple[str, str] | None] | None = None,
+        title_color: str | None = None,
+    ) -> str:
+        """Render a centered popup, wait for a keypress, erase, and return it.
+
+        Parameters
+        ----------
+        title : str
+            Text shown in the title bar.
+        icon : str
+            Single character drawn before the title (e.g. "▶", "⚠").
+        body : str | list[str]
+            Message shown below the title.  A string is word-wrapped; a list
+            is used as-is.
+        options : list of (key, label)
+            Horizontal flow-wrapped option bar at the bottom.
+        items : list of (key, label) | None
+            Vertical menu items.  ``None`` entries become separator lines.
+        title_color : str | None
+            ANSI color sequence for the title.  Defaults to theme.color_warning.
+        """
+        scr = self._scr
+        t = scr._theme
+        if title_color is None:
+            title_color = t.color_warning
+
+        if not scr._active:
+            return self._show_plain(title, body, options, items)
+
+        cap_w = min(scr._cols - 4, 72)
+        cap_inner = cap_w - 2
+
+        # -- Prepare body lines ------------------------------------------------
+        if isinstance(body, str) and body:
+            body_lines = _wrap_text(body, cap_inner - 2)
+        elif isinstance(body, list):
+            body_lines = body
+        else:
+            body_lines = []
+
+        # -- Measure content widths to auto-size the box -----------------------
+        icon_str = f"{icon}  " if icon else ""
+        title_text = f"{icon_str}{title}"
+        widths: list[int] = [len(title_text)]
+        for line in body_lines:
+            widths.append(len(_strip_ansi(line)))
+
+        valid_keys: set[str] = set()
+
+        # -- Prepare menu items (vertical, one per row) ------------------------
+        item_rows: list[tuple[str, str] | None] = []
+        if items:
+            for entry in items:
+                if entry is None:
+                    item_rows.append(None)
+                else:
+                    item_rows.append(entry)
+                    valid_keys.add(entry[0].lower())
+                    k_display = entry[0] if entry[0].startswith("/") else f"[{entry[0]}]"
+                    widths.append(len(f"  {k_display}  {entry[1]}"))
+
+        # -- Prepare option rows (horizontal, flow-wrapped) --------------------
+        # We need inner_w first to compute wrapping, so compute preliminary
+        inner_w = min(max(w + 1 for w in widths), cap_inner)
+
+        opt_rows: list[list[tuple[str, str]]] = []
+
+        if options:
+            opt_rows.append([])
+            row_len = 0
+            for k, label in options:
+                valid_keys.add(k.lower())
+                part_len = len(f"[{k}] {label}  ")
+                if opt_rows[-1] and row_len + part_len > inner_w - 1:
+                    opt_rows.append([])
+                    row_len = 0
+                opt_rows[-1].append((k, label))
+                row_len += part_len
+            # Add option row widths
+            for orow in opt_rows:
+                widths.append(sum(len(f"[{k}] {label}  ") for k, label in orow))
+
+        # Final inner_w: fit widest content + 1 char padding, capped
+        inner_w = min(max(w + 1 for w in widths), cap_inner)
+        max_w = inner_w + 2
+
+        # Re-wrap options with final inner_w
+        if options:
+            opt_rows = [[]]
+            row_len = 0
+            for k, label in options:
+                part_len = len(f"[{k}] {label}  ")
+                if opt_rows[-1] and row_len + part_len > inner_w - 1:
+                    opt_rows.append([])
+                    row_len = 0
+                opt_rows[-1].append((k, label))
+                row_len += part_len
+
+        # -- Compute box height ------------------------------------------------
+        h = 3  # top border + title row + separator
+        h += len(body_lines) if body_lines else 0
+        if body_lines and (opt_rows or item_rows):
+            h += 1  # separator between body and items/options
+        h += len(item_rows)
+        h += len(opt_rows)
+        h += 1  # bottom border
+
+        # -- Center on screen --------------------------------------------------
+        row0 = max(2, (scr._rows - h) // 2)
+        col0 = max(1, (scr._cols - max_w) // 2)
+
+        # -- Render ------------------------------------------------------------
+        buf: list[str] = [_sc()]
+        row = row0
+
+        # Helpers — each produces exactly max_w visible characters
+        def hline(left: str, fill: str, right: str, color: str = t.text_dim) -> str:
+            return (_cup(row, col0) + t.bg_status + color
+                    + left + fill * inner_w + right + _RESET)
+
+        def content_row(text: str, *, color: str = t.text_primary,
+                        ansi_text: str | None = None) -> str:
+            """Render │ text ... │ with correct padding.
+
+            If *ansi_text* is given it is printed instead of *text*, but
+            *text* is used to measure visible width.
+            """
+            display = ansi_text if ansi_text is not None else text
+            pad = max(0, inner_w - 1 - len(text))
+            return (_cup(row, col0) + t.bg_status + color
+                    + "│ " + display + " " * pad + "│" + _RESET)
+
+        # Top border
+        buf.append(hline("┌", "─", "┐", title_color + _BOLD))
+        row += 1
+
+        # Title
+        buf.append(content_row(title_text, color=title_color + _BOLD))
+        row += 1
+
+        # Separator after title
+        buf.append(hline("├", "─", "┤"))
+        row += 1
+
+        # Body
+        for line in body_lines:
+            vis = _strip_ansi(line)
+            buf.append(content_row(vis, ansi_text=line))
+            row += 1
+
+        # Separator between body and options/items
+        if body_lines and (opt_rows or item_rows):
+            buf.append(hline("├", "─", "┤"))
+            row += 1
+
+        # Vertical menu items
+        for entry in item_rows:
+            if entry is None:
+                buf.append(hline("├", "─", "┤"))
+                row += 1
+                continue
+            key, desc = entry
+            k_display = key if key.startswith("/") else f"[{key}]"
+            k_styled = t.color_success + _BOLD + k_display + _RESET
+            plain = f"  {k_display}  {desc}"
+            ansi = f"  {k_styled}  {t.text_secondary}{desc}{_RESET}"
+            buf.append(content_row(plain, ansi_text=ansi))
+            row += 1
+
+        # Horizontal option rows
+        for orow in opt_rows:
+            plain = "".join(f"[{k}] {label}  " for k, label in orow)
+            ansi = "".join(
+                f"{t.color_agent}[{k}]{_RESET}{t.text_primary} {label}  "
+                for k, label in orow
+            )
+            buf.append(content_row(plain, ansi_text=ansi))
+            row += 1
+
+        # Bottom border
+        buf.append(hline("└", "─", "┘"))
+
+        scr._write("".join(buf))
+
+        # -- Read keypress -----------------------------------------------------
+        choice = ""
+        while choice not in valid_keys:
+            try:
+                ch = sys.stdin.read(1)
+                choice = ch.lower()
+            except (EOFError, OSError):
+                # fall back to last option
+                if options:
+                    choice = options[-1][0]
+                elif items:
+                    last = [e for e in items if e is not None]
+                    choice = last[-1][0].lower() if last else "q"
+                else:
+                    choice = "q"
+                break
+
+        # -- Erase popup -------------------------------------------------------
+        erase: list[str] = []
+        for r in range(row0, row + 1):
+            erase.append(_cup(r, col0) + " " * max_w)
+        erase.append(_rc())
+        scr._write("".join(erase))
+        scr._full_render()
+        return choice
+
+    # ── Plain-text fallback (non-TTY / alt-screen not active) ─────────────────
+
+    @staticmethod
+    def _show_plain(
+        title: str,
+        body: str | list[str],
+        options: list[tuple[str, str]] | None,
+        items: list[tuple[str, str] | None] | None,
+    ) -> str:
+        sys.stderr.write(f"\n{title}\n")
+        if isinstance(body, str) and body:
+            sys.stderr.write(f"{body}\n")
+        elif isinstance(body, list):
+            for line in body:
+                sys.stderr.write(f"{_strip_ansi(line)}\n")
+        if items:
+            for entry in items:
+                if entry is None:
+                    sys.stderr.write("─" * 40 + "\n")
+                else:
+                    sys.stderr.write(f"  [{entry[0]}] {entry[1]}\n")
+        if options:
+            keys = "/".join(k for k, _ in options)
+            sys.stderr.write(f"[{keys}]: ")
+            sys.stderr.flush()
+            return (input() or options[-1][0]).strip().lower()
+        if items:
+            valid = {e[0].lower() for e in items if e is not None}
+            sys.stderr.write("Choice: ")
+            sys.stderr.flush()
+            try:
+                ch = input().strip().lower()
+                return ch if ch in valid else "q"
+            except (EOFError, KeyboardInterrupt):
+                return "q"
+        return "q"
 
 
 # ── Screen ────────────────────────────────────────────────────────────────────
@@ -681,118 +968,11 @@ class Screen:
         # status bar will be updated on next animation tick or content append
 
     def show_error_dialog(self, title: str, message: str, options: list[tuple[str, str]], *, icon: str = "⚠") -> str:
+        """Render a centered modal dialog and return the chosen option key.
+
+        Delegates to :class:`Popup` for all rendering and input.
         """
-        Render a centered modal dialog and return the chosen option key.
-
-        options: list of (key, label) e.g. [("r", "Retry"), ("e", "Edit agents.json"), ("q", "Quit")]
-        icon: character to show before the title (default "⚠", use "" for none)
-        Returns the chosen key (lowercased).
-        """
-        if not self._active:
-            # Fallback for non-alt-screen: plain text prompt
-            sys.stderr.write(f"\n{title}\n{message}\n")
-            keys = "/".join(k for k, _ in options)
-            sys.stderr.write(f"[{keys}]: ")
-            sys.stderr.flush()
-            return (input() or options[-1][0]).strip().lower()
-
-        t = self._theme
-        w = min(self._cols - 4, 72)
-        lines = _wrap_text(message, w - 4)
-
-        # Build option rows — flow-wrap into lines that fit inner_w
-        inner_w = w - 2
-        opt_rows: list[list[tuple[str, str]]] = [[]]
-        row_len = 0
-        for k, label in options:
-            part_len = len(f"  [{k}] {label}  ")
-            if opt_rows[-1] and row_len + part_len > inner_w - 2:
-                opt_rows.append([])
-                row_len = 0
-            opt_rows[-1].append((k, label))
-            row_len += part_len
-
-        # Box dimensions
-        box_h = 3 + len(lines) + 1 + len(opt_rows) + 1  # border+title+sep + msg + sep + opts + border
-
-        # Center position
-        row0 = max(2, (self._rows - box_h) // 2)
-        col0 = max(1, (self._cols - w) // 2)
-
-        def _row(r: str, fill: str = " ") -> str:
-            vis = _strip_ansi(r)
-            pad = max(0, inner_w - len(vis))
-            return f"│ {r}{fill * pad} │"
-
-        buf: list[str] = []
-        # Dim the background by drawing a translucent overlay effect (just redraw status bar)
-        buf.append(_sc())
-
-        row = row0
-        # Top border + title
-        icon_prefix = f"{icon}  " if icon else ""
-        title_display = f"{icon_prefix}{title}"
-        buf.append(_cup(row, col0) + t.bg_status + t.color_warning + _BOLD +
-                   "┌" + "─" * inner_w + "┐" + _RESET)
-        row += 1
-        title_pad = max(0, inner_w - len(title_display) - 2)
-        buf.append(_cup(row, col0) + t.bg_status + t.color_warning + _BOLD +
-                   f"│ {title_display}" + " " * title_pad + "│" + _RESET)
-        row += 1
-        buf.append(_cup(row, col0) + t.bg_status + t.text_dim +
-                   "├" + "─" * inner_w + "┤" + _RESET)
-        row += 1
-
-        # Message lines
-        for line in lines:
-            vis_len = len(_strip_ansi(line))
-            pad = max(0, inner_w - vis_len - 2)
-            buf.append(_cup(row, col0) + t.bg_status + t.text_primary +
-                       f"│ {line}" + " " * pad + " │" + _RESET)
-            row += 1
-
-        # Separator before options
-        buf.append(_cup(row, col0) + t.bg_status + t.text_dim +
-                   "├" + "─" * inner_w + "┤" + _RESET)
-        row += 1
-
-        # Options rows
-        for opt_row in opt_rows:
-            styled_opts = "".join(
-                f"{t.color_agent}[{k}]{_RESET}{t.text_primary} {label}  "
-                for k, label in opt_row
-            )
-            plain_len = sum(len(f"[{k}] {label}  ") for k, label in opt_row)
-            opt_pad = max(0, inner_w - plain_len - 2)
-            buf.append(_cup(row, col0) + t.bg_status + t.text_primary +
-                       "│ " + styled_opts + " " * opt_pad + "│" + _RESET)
-            row += 1
-
-        # Bottom border
-        buf.append(_cup(row, col0) + t.bg_status + t.text_dim +
-                   "└" + "─" * inner_w + "┘" + _RESET)
-
-        self._write("".join(buf))
-
-        # Read a single keypress (ICANON is off, so we get chars immediately)
-        valid_keys = {k.lower() for k, _ in options}
-        choice = ""
-        while choice not in valid_keys:
-            try:
-                ch = sys.stdin.read(1)
-                choice = ch.lower()
-            except (EOFError, OSError):
-                choice = options[-1][0]
-                break
-
-        # Erase the dialog box
-        erase = []
-        for r in range(row0, row + 1):
-            erase.append(_cup(r, col0) + " " * w)
-        erase.append(_rc())
-        self._write("".join(erase))
-        self._full_render()
-        return choice
+        return Popup(self).show(title=title, icon=icon, body=message, options=options)
 
     # ── Animation thread ───────────────────────────────────────────────────────
 
@@ -928,107 +1108,17 @@ class InterruptMenu:
     # ── Popup implementation ──────────────────────────────────────────────────
 
     def _show_popup(self) -> str:
-        scr = self._display
-        t   = scr._theme
-
-        # Build the visible rows
-        title  = "INTERRUPTED"
-        rows: list[tuple[str, str]] = []          # (key_display, description)
-        valid: set[str] = set()
-
+        items: list[tuple[str, str] | None] = []
         for key, desc in self._ITEMS:
             if key == "─":
-                rows.append(("─", ""))
+                items.append(None)
             else:
-                rows.append((key, desc))
-                valid.add(key.lower())
-
-        # Box geometry
-        key_col  = max(len(k) for k, _ in rows if k != "─") + 2
-        desc_col = max(len(d) for _, d in rows)
-        inner_w  = max(key_col + desc_col + 4, len(title) + 6)
-        inner_w  = min(inner_w, scr._cols - 6)
-        w        = inner_w + 2   # includes │ borders
-        box_h    = 2 + len(rows) + 2   # top border + title + sep + rows + bottom
-
-        row0 = max(2, (scr._rows - box_h) // 2)
-        col0 = max(1, (scr._cols - w) // 2)
-
-        def _border(char: str) -> str:
-            return _cup(row0 + char_row, col0) + t.bg_status + t.text_dim + char + _RESET
-
-        buf: list[str] = []
-        buf.append(_sc())
-
-        # Top border + title
-        char_row = 0
-        title_pad = inner_w - len(title) - 2
-        buf.append(
-            _cup(row0, col0) + t.bg_status + t.color_agent + _BOLD
-            + "┌" + "─" * inner_w + "┐" + _RESET
+                items.append((key, desc))
+        return Popup(self._display).show(
+            title="INTERRUPTED",
+            items=items,
+            title_color=self._display._theme.color_agent,
         )
-        char_row = 1
-        buf.append(
-            _cup(row0 + char_row, col0) + t.bg_status + t.color_agent + _BOLD
-            + f"│ {title}" + " " * title_pad + "│" + _RESET
-        )
-        char_row = 2
-        buf.append(
-            _cup(row0 + char_row, col0) + t.bg_status + t.text_dim
-            + "├" + "─" * inner_w + "┤" + _RESET
-        )
-
-        # Menu rows
-        for i, (key, desc) in enumerate(rows):
-            char_row = 3 + i
-            if key == "─":
-                buf.append(
-                    _cup(row0 + char_row, col0) + t.bg_status + t.text_dim
-                    + "├" + "─" * inner_w + "┤" + _RESET
-                )
-                continue
-            k_display = key if key.startswith("/") else f"[{key}]"
-            k_styled  = t.color_success + _BOLD + k_display + _RESET
-            k_vis     = len(k_display)
-            gap       = inner_w - k_vis - len(desc) - 4
-            row_text  = f"  {k_styled}  {t.text_secondary}{desc}{t.text_dim}{' ' * max(0,gap)}"
-            vis_len   = k_vis + 2 + len(desc) + 2 + max(0, gap)
-            pad       = max(0, inner_w - vis_len)
-            buf.append(
-                _cup(row0 + char_row, col0) + t.bg_status
-                + "│" + row_text + " " * pad + t.text_dim + "│" + _RESET
-            )
-
-        # Bottom border
-        char_row = 3 + len(rows)
-        buf.append(
-            _cup(row0 + char_row, col0) + t.bg_status + t.text_dim
-            + "└" + "─" * inner_w + "┘" + _RESET
-        )
-
-        scr._write("".join(buf))
-
-        # Read keypress (ICANON off → each char arrives immediately)
-        choice = ""
-        while True:
-            try:
-                ch = sys.stdin.read(1)
-            except (EOFError, OSError):
-                choice = "q"
-                break
-            cl = ch.lower()
-            if cl in valid:
-                choice = cl
-                break
-
-        # Erase popup
-        erase: list[str] = []
-        for r in range(row0, row0 + char_row + 1):
-            erase.append(_cup(r, col0) + " " * w)
-        erase.append(_rc())
-        scr._write("".join(erase))
-        scr._full_render()
-        return choice
 
     # ── Plain-text fallback (non-TTY / no alt-screen) ─────────────────────────
 
