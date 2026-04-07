@@ -6,3 +6,11 @@ __pycache__/
 dist/
 build/
 .eggs/
+.coordinator-debug.log
+workflow_events.jsonl
+workspace/.coordinator-debug.log
+workspace/prompts_log/
+copilot.bak/
+package-lock.json
+package.json
+uv.lock

@@ -2,7 +2,7 @@
 """
 coordinator.py — backwards-compatible entry point.
 
-If you installed via pip, use `agent-coord` instead.
+If you installed via pip, use `agent-coordinator` instead.
 If you cloned the repo, `python3 coordinator.py` still works.
 """
 

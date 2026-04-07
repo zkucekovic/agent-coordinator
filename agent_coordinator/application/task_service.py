@@ -78,10 +78,13 @@ class TaskService:
         - transition is not in the allowed table
         - concurrency guard: another task is already IN_ENGINEERING
         """
+        from datetime import datetime, timezone
+        
         task = self._require(task_id)
         validate_transition(task_id, task.status, new_status, self._transitions)
         self._check_concurrency(task_id, new_status)
         task.status = new_status
+        task.updated_at = datetime.now(timezone.utc).isoformat()
         self._repo.save(task)
 
     def increment_rework(self, task_id: str) -> TaskStatus:

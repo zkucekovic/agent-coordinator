@@ -14,7 +14,6 @@ from agent_coordinator.domain.models import HandoffMessage, HandoffStatus
 # Statuses that mean the coordinator should stop the loop.
 _TERMINAL_STATUSES: frozenset[HandoffStatus] = frozenset({
     HandoffStatus.PLAN_COMPLETE,
-    HandoffStatus.NEEDS_HUMAN,
     HandoffStatus.BLOCKED,
 })
 
@@ -60,10 +59,11 @@ class WorkflowRouter:
             )
 
         if next_actor == "human":
+            # Human is not terminal - coordinator will handle it
             return RoutingDecision(
                 next_actor="human",
-                is_terminal=True,
-                stop_reason="Human operator required (NEXT: human)",
+                is_terminal=False,
+                stop_reason=None,
             )
 
         return RoutingDecision(

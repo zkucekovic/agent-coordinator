@@ -58,6 +58,8 @@ class JsonTaskRepository(TaskRepository):
                 acceptance_criteria=item.get("acceptance_criteria", []),
                 rework_count=item.get("rework_count", 0),
                 depends_on=item.get("depends_on", []),
+                created_at=item.get("created_at", ""),
+                updated_at=item.get("updated_at", ""),
             )
             self._tasks[task.id] = task
 
@@ -79,4 +81,6 @@ class JsonTaskRepository(TaskRepository):
             "acceptance_criteria": task.acceptance_criteria,
             "rework_count": task.rework_count,
             "depends_on": task.depends_on,
+            "created_at": task.created_at,
+            "updated_at": task.updated_at,
         }

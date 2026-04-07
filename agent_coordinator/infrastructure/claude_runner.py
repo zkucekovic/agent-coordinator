@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from typing import Callable
 
 from agent_coordinator.application.runner import AgentRunner
 from agent_coordinator.domain.models import RunResult
@@ -31,6 +32,7 @@ class ClaudeCodeRunner(AgentRunner):
         workspace: Path,
         session_id: str | None = None,
         model: str | None = None,
+        on_output: Callable[[str], None] | None = None,
     ) -> RunResult:
         """
         Invoke claude CLI and return the result.

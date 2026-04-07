@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""
+mock-ai-tool - A simple mock CLI tool for testing custom backend integration.
+
+This script simulates an AI tool that can be used as a custom backend for the agent coordinator.
+It accepts a prompt and optional arguments, then returns a mock response.
+
+Usage:
+    mock-ai-tool run "your prompt here" --dir /path/to/workspace --session abc123 --model gpt-4
+
+Output format can be controlled via environment variable:
+    OUTPUT_FORMAT=text|json|jsonl
+"""
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def generate_response(prompt: str, workspace: str, session_id: str, model: str) -> str:
+    """Generate a mock AI response."""
+    lines = [
+        f"I received the prompt: {prompt[:50]}...",
+        f"Working in directory: {workspace}",
+        f"Using session: {session_id or 'new session'}",
+        f"Model: {model or 'default'}",
+        "",
+        "Mock analysis complete. Would update handoff.md here.",
+    ]
+    return "\n".join(lines)
+
+
+def output_text(response: str, session_id: str):
+    """Output as plain text."""
+    print(response)
+
+
+def output_json(response: str, session_id: str):
+    """Output as JSON object."""
+    data = {
+        "result": response,
+        "session_id": session_id,
+        "status": "success"
+    }
+    print(json.dumps(data))
+
+
+def output_jsonl(response: str, session_id: str):
+    """Output as JSON Lines (streaming format)."""
+    # Session ID event
+    print(json.dumps({"sessionID": session_id, "type": "init"}))
+    
+    # Stream response in chunks
+    chunks = response.split("\n")
+    for chunk in chunks:
+        if chunk:
+            print(json.dumps({
+                "type": "text",
+                "part": {"text": chunk + "\n"}
+            }))
+    
+    # Completion event
+    print(json.dumps({"type": "complete", "sessionID": session_id}))
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Mock AI tool for testing")
+    parser.add_argument("command", choices=["run", "execute", "chat"], help="Command to run")
+    parser.add_argument("prompt", help="The prompt/message")
+    parser.add_argument("--dir", "--cwd", dest="workspace", default=".", help="Working directory")
+    parser.add_argument("--session", "--session-id", dest="session_id", help="Session ID for continuity")
+    parser.add_argument("--model", help="Model to use")
+    parser.add_argument("--format", choices=["text", "json", "jsonl"], help="Output format")
+    
+    args = parser.parse_args()
+    
+    # Generate session ID if not provided
+    session_id = args.session_id or f"mock-session-{os.getpid()}"
+    
+    # Generate response
+    response = generate_response(args.prompt, args.workspace, session_id, args.model)
+    
+    # Determine output format
+    output_format = args.format or os.getenv("OUTPUT_FORMAT", "text")
+    
+    # Output in requested format
+    if output_format == "json":
+        output_json(response, session_id)
+    elif output_format == "jsonl":
+        output_jsonl(response, session_id)
+    else:
+        output_text(response, session_id)
+    
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

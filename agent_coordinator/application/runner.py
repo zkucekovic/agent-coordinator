@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Callable
 
 from agent_coordinator.domain.models import RunResult
 
@@ -20,6 +21,7 @@ class AgentRunner(ABC):
     Implementations include:
     - OpenCodeRunner  (opencode CLI)
     - ClaudeCodeRunner (claude CLI)
+    - CopilotRunner   (GitHub Copilot CLI)
     - ManualRunner    (human-in-the-loop)
     """
 
@@ -30,6 +32,7 @@ class AgentRunner(ABC):
         workspace: Path,
         session_id: str | None = None,
         model: str | None = None,
+        on_output: Callable[[str], None] | None = None,
     ) -> RunResult:
         """
         Execute one agent turn and return the result.
@@ -39,6 +42,7 @@ class AgentRunner(ABC):
             workspace:  The working directory for the agent.
             session_id: Optional session ID for context continuity.
             model:      Optional model override.
+            on_output:  Optional callback for streaming output chunks (optional for backwards compatibility).
 
         Returns:
             RunResult with session_id and the agent's text output.

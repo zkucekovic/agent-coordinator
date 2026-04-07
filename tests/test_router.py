@@ -28,9 +28,11 @@ class TestWorkflowRouter(unittest.TestCase):
         self.assertTrue(decision.is_terminal)
         self.assertIn("complete", decision.stop_reason.lower())
 
-    def test_needs_human_is_terminal(self):
+    def test_needs_human_is_not_terminal_when_next_human(self):
+        # needs_human + NEXT: human is handled by coordinator
         decision = self.router.route(_msg(HandoffStatus.NEEDS_HUMAN, "human"))
-        self.assertTrue(decision.is_terminal)
+        self.assertFalse(decision.is_terminal)
+        self.assertEqual(decision.next_actor, "human")
 
     def test_blocked_status_is_terminal(self):
         decision = self.router.route(_msg(HandoffStatus.BLOCKED, "architect"))
@@ -43,9 +45,10 @@ class TestWorkflowRouter(unittest.TestCase):
         self.assertTrue(decision.is_terminal)
         self.assertEqual(decision.next_actor, "none")
 
-    def test_next_human_is_terminal(self):
+    def test_next_human_is_not_terminal(self):
+        # Human is handled by coordinator, not terminal
         decision = self.router.route(_msg(HandoffStatus.CONTINUE, "human"))
-        self.assertTrue(decision.is_terminal)
+        self.assertFalse(decision.is_terminal)
         self.assertEqual(decision.next_actor, "human")
 
     # ── Normal routing ────────────────────────────────────────────────────────

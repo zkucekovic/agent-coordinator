@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from typing import Callable
 
 from agent_coordinator.application.runner import AgentRunner
 from agent_coordinator.domain.models import RunResult
@@ -30,6 +31,7 @@ class OpenCodeRunner(AgentRunner):
         workspace: Path,
         session_id: str | None = None,
         model: str | None = None,
+        on_output: Callable[[str], None] | None = None,
     ) -> RunResult:
         """
         Invoke opencode and return (session_id, full_text_response).
@@ -38,12 +40,12 @@ class OpenCodeRunner(AgentRunner):
         """
         cmd = self._build_cmd(message, workspace, session_id, model)
 
-        if self._verbose:
+        if self._verbose and not on_output:
             label = f"session {session_id[:12]}…" if session_id else "new session"
             print(f"  → running opencode ({label})")
 
         result = subprocess.run(cmd, capture_output=True, text=True)
-        return self._parse_output(result, session_id)
+        return self._parse_output(result, session_id, on_output)
 
     def _build_cmd(
         self,
@@ -63,6 +65,7 @@ class OpenCodeRunner(AgentRunner):
         self,
         result: subprocess.CompletedProcess,
         fallback_session_id: str | None,
+        on_output: Callable[[str], None] | None = None,
     ) -> RunResult:
         text_parts: list[str] = []
         session_id = fallback_session_id
@@ -73,14 +76,16 @@ class OpenCodeRunner(AgentRunner):
                 if event.get("type") == "text":
                     chunk = event["part"]["text"]
                     text_parts.append(chunk)
-                    if self._verbose:
+                    if on_output:
+                        on_output(chunk)
+                    elif self._verbose:
                         print(chunk, end="", flush=True)
                 if session_id is None and "sessionID" in event:
                     session_id = event["sessionID"]
             except (json.JSONDecodeError, KeyError):
                 pass
 
-        if self._verbose and text_parts:
+        if self._verbose and text_parts and not on_output:
             print()
 
         if result.returncode != 0 and not text_parts:

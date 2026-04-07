@@ -60,6 +60,8 @@ class Task:
     acceptance_criteria: list[str] = field(default_factory=list)
     rework_count: int = 0
     depends_on: list[str] = field(default_factory=list)
+    created_at: str = ""  # ISO 8601 timestamp
+    updated_at: str = ""  # ISO 8601 timestamp
 
 
 @dataclass

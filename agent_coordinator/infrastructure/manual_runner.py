@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
+from typing import Callable
 
 from agent_coordinator.application.runner import AgentRunner
 from agent_coordinator.domain.models import RunResult
@@ -34,6 +35,7 @@ class ManualRunner(AgentRunner):
         workspace: Path,
         session_id: str | None = None,
         model: str | None = None,
+        on_output: Callable[[str], None] | None = None,
     ) -> RunResult:
         """
         Display the prompt and wait for the human to act.

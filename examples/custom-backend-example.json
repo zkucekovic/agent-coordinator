@@ -1,0 +1,35 @@
+{
+    "default_backend": "copilot",
+    "retry_policy": {
+        "max_rework": 3,
+        "on_exceed": "needs_human"
+    },
+    "agents": {
+        "architect": {
+            "model": "claude-sonnet-4.5",
+            "backend": "copilot",
+            "prompt_file": "prompts/architect.md"
+        },
+        "developer": {
+            "model": "claude-sonnet-4.5",
+            "backend": "custom-coder",
+            "backend_config": {
+                "command": ["custom-coder", "execute"],
+                "message_arg": "{message}",
+                "workspace_arg": ["--dir", "{workspace}"],
+                "session_arg": ["--session", "{session_id}"],
+                "model_arg": ["--model", "{model}"],
+                "output_format": "json",
+                "json_text_field": "response",
+                "json_session_field": "session_id"
+            },
+            "prompt_file": "prompts/developer.md",
+            "comment": "Example of a custom backend configuration. Replace 'custom-coder' with your CLI tool."
+        },
+        "qa_engineer": {
+            "model": "claude-sonnet-4.5",
+            "backend": "copilot",
+            "prompt_file": "prompts/qa_engineer.md"
+        }
+    }
+}

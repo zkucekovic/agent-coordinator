@@ -1,24 +1,29 @@
 {
-  "default_backend": "opencode",
-  "retry_policy": {
-    "max_rework": 3,
-    "on_exceed": "needs_human"
-  },
-  "agents": {
-    "architect": {
-      "model": null,
-      "backend": "opencode",
-      "prompt_file": "prompts/architect.md"
+    "default_backend": "copilot",
+    "retry_policy": {
+        "max_rework": 3,
+        "on_exceed": "needs_human"
     },
-    "developer": {
-      "model": null,
-      "backend": "opencode",
-      "prompt_file": "prompts/developer.md"
-    },
-    "qa_engineer": {
-      "model": null,
-      "backend": "opencode",
-      "prompt_file": "prompts/qa_engineer.md"
+    "agents": {
+        "helper": {
+            "model": "qwen3:8b",
+            "backend": "opencode",
+            "prompt_file": "prompts/helper.md"
+        },
+        "architect": {
+            "model": "claude-opus-4.6",
+            "backend": "copilot",
+            "prompt_file": "prompts/architect.md"
+        },
+        "developer": {
+            "model": "claude-sonnet-4.6",
+            "backend": "copilot",
+            "prompt_file": "prompts/developer.md"
+        },
+        "qa_engineer": {
+            "model": "claude-sonnet-4.6",
+            "backend": "copilot",
+            "prompt_file": "prompts/qa_engineer.md"
+        }
     }
-  }
 }
