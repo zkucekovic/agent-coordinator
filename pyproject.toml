@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-coordinator"
-version = "0.1.0"
+version = "1.0.0"
 description = "Tool-agnostic multi-agent workflow coordinator. Orchestrate AI coding agents through a structured handoff protocol."
 readme = "README.md"
 license = "MIT"
@@ -49,3 +49,8 @@ include = ["agent_coordinator*"]
 
 [tool.setuptools.package-data]
 agent_coordinator = ["prompts/*.md"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]

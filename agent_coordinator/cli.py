@@ -41,9 +41,9 @@ EVENT_LOG_FILE = "workflow_events.jsonl"
 AGENTS_FILE = "agents.json"
 
 _DEFAULT_AGENTS: dict = {
-    "architect":   {"model": "claude-sonnet-4.5", "prompt_file": "prompts/architect.md"},
-    "developer":   {"model": "claude-sonnet-4.5", "prompt_file": "prompts/developer.md"},
-    "qa_engineer": {"model": "claude-sonnet-4.5", "prompt_file": "prompts/qa_engineer.md"},
+    "architect":   {"prompt_file": "prompts/architect.md"},
+    "developer":   {"prompt_file": "prompts/developer.md"},
+    "qa_engineer": {"prompt_file": "prompts/qa_engineer.md"},
 }
 
 DEFAULT_BACKEND = "copilot"
@@ -130,10 +130,20 @@ def create_runner(backend: str, backend_config: dict | None = None, verbose: boo
             print(f"Found {backend} executable at: {executable}")
         return GenericRunner(backend_config, verbose=verbose)
     
-    # Executable not found, prompt user
+    # Executable not found — prompt only in interactive sessions
     if backend_config is None:
+        if not sys.stdin.isatty():
+            raise ValueError(
+                f"Backend '{backend}' not found in supported backends and executable not in PATH.\n\n"
+                f"Supported backends: {', '.join(sorted(_RUNNER_REGISTRY.keys()))}\n\n"
+                f"You can:\n"
+                f"  1. Provide the full path to the backend executable\n"
+                f"  2. Update agents.json to use a supported backend\n"
+                f"  3. Add 'backend_config' in agents.json for this backend"
+            )
+
         from agent_coordinator.infrastructure.enhanced_input import enhanced_input, Colors
-        
+
         print()
         print(Colors.warning(f"Backend '{backend}' not found in supported backends and executable not in PATH."))
         print()
@@ -144,22 +154,22 @@ def create_runner(backend: str, backend_config: dict | None = None, verbose: boo
         print("  2. Update agents.json to use a supported backend")
         print("  3. Add 'backend_config' in agents.json for this backend")
         print()
-        
+
         choice = enhanced_input(
             Colors.prompt("Enter path to backend executable (or press Enter to abort): ")
         ).strip()
-        
+
         if not choice:
             raise ValueError(
                 f"Backend '{backend}' not available. "
                 f"Update agents.json to use one of: {', '.join(sorted(_RUNNER_REGISTRY.keys()))}"
             )
-        
+
         backend_config = {
             "executable": choice,
             "args": ["--workspace", "{workspace}"]
         }
-        
+
         print(Colors.success(f"Using backend at: {choice}"))
     
     return GenericRunner(backend_config, verbose=verbose)
@@ -218,6 +228,22 @@ def _file_hash(path: Path) -> str:
     if not path.exists():
         return ""
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _retry_prompt(agent: str, workspace: Path) -> str:
+    """Prompt sent on retry attempts after the agent failed to write a valid handoff."""
+    handoff = workspace / "handoff.md"
+    snippet = ""
+    if handoff.exists():
+        lines = handoff.read_text(errors="replace").splitlines()[:10]
+        snippet = "\n".join(lines)
+    return (
+        f"Your previous response did NOT append a valid ---HANDOFF--- block to "
+        f"{workspace}/handoff.md.\n\n"
+        f"Current handoff.md (first 10 lines):\n{snippet}\n\n"
+        f"Please complete your work and write the required ---HANDOFF--- block "
+        f"followed by ---END--- at the end of {workspace}/handoff.md."
+    )
 
 
 # ── Coordinator loop ──────────────────────────────────────────────────────────
