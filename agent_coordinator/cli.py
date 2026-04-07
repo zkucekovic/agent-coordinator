@@ -714,22 +714,16 @@ def _run_from_workspace(workspace: Path, args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="Orchestrate multi-agent AI workflows via handoff.md",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Import an existing spec or plan, then run:
-  agent-coordinator --import SPECIFICATION.md --workspace ./my-project
-  agent-coordinator --import plan.md --workspace ./my-project --type plan
-  agent-coordinator --workspace ./my-project
-
-  # Run a workflow:
-  agent-coordinator --workspace ./my-feature --max-turns 20
-  agent-coordinator --workspace ./my-feature --output-lines 15
-  agent-coordinator --workspace ./my-feature --no-streaming
-  agent-coordinator --workspace ./my-feature --reset
+  agent-coordinator                                    # interactive startup menu
+  agent-coordinator --import SPECIFICATION.md          # import spec
+  agent-coordinator --workspace ./my-project           # run coordinator
+  agent-coordinator --workspace ./my-feature --reset   # reset sessions
 """,
     )
 
