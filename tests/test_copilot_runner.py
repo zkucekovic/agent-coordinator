@@ -15,7 +15,7 @@ class TestCopilotRunnerBuildCmd(unittest.TestCase):
 
     def test_build_cmd_minimal(self):
         cmd = self.runner._build_cmd("hello", self.workspace, None, None)
-        self.assertEqual(cmd, ["copilot", "--prompt", "hello", "--allow-all-tools", "--no-color"])
+        self.assertEqual(cmd, ["copilot", "--prompt", "hello", "--allow-all", "--no-color"])
 
     def test_build_cmd_with_session_id(self):
         cmd = self.runner._build_cmd("hello", self.workspace, "abc-uuid", None)

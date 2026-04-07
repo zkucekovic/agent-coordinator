@@ -36,7 +36,7 @@ class CopilotRunner(AgentRunner):
         return RunResult(session_id=session, text=result.stdout)
 
     def _build_cmd(self, message, workspace, session_id, model):
-        cmd = ["copilot", "--prompt", message, "--allow-all-tools", "--no-color"]
+        cmd = ["copilot", "--prompt", message, "--allow-all", "--no-color"]
         if model:
             cmd.extend(["--model", model])
         if session_id:

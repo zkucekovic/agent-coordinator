@@ -11,7 +11,8 @@ Build a fully playable Tetris game as a single-file HTML application. The game s
 - Piece movement: left, right, soft drop (down arrow), hard drop (spacebar)
 - Line clearing when a row is completely filled
 - Increasing speed as the player clears more lines (level system)
-- Game over when a new piece cannot be placed
+- Game over when a new piece cannot fit its full length from the to of the screen
+  without colliding with another piece.
 
 ### Display
 - Show the current score, level, and number of lines cleared
