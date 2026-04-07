@@ -539,6 +539,109 @@ class Screen:
         self._agent_states[agent] = state
         # status bar will be updated on next animation tick or content append
 
+    def show_error_dialog(self, title: str, message: str, options: list[tuple[str, str]]) -> str:
+        """
+        Render a centered modal dialog and return the chosen option key.
+
+        options: list of (key, label) e.g. [("r", "Retry"), ("e", "Edit agents.json"), ("q", "Quit")]
+        Returns the chosen key (lowercased).
+        """
+        if not self._active:
+            # Fallback for non-alt-screen: plain text prompt
+            sys.stderr.write(f"\n{title}\n{message}\n")
+            keys = "/".join(k for k, _ in options)
+            sys.stderr.write(f"[{keys}]: ")
+            sys.stderr.flush()
+            return (input() or options[-1][0]).strip().lower()
+
+        t = self._theme
+        w = min(self._cols - 4, 72)
+        lines = _wrap_text(message, w - 4)
+
+        # Build option bar
+        opt_parts = [f"  [{k}] {label}  " for k, label in options]
+        opt_line = "".join(opt_parts)
+
+        # Box dimensions
+        inner_w = w - 2
+        box_h = 3 + len(lines) + 2 + 1  # top border + title + sep + lines + gap + options + bottom
+
+        # Center position
+        row0 = max(2, (self._rows - box_h) // 2)
+        col0 = max(1, (self._cols - w) // 2)
+
+        def _row(r: str, fill: str = " ") -> str:
+            vis = _strip_ansi(r)
+            pad = max(0, inner_w - len(vis))
+            return f"│ {r}{fill * pad} │"
+
+        buf: list[str] = []
+        # Dim the background by drawing a translucent overlay effect (just redraw status bar)
+        buf.append(_sc())
+
+        row = row0
+        # Top border + title
+        buf.append(_cup(row, col0) + t.bg_status + t.color_warning + _BOLD +
+                   "┌" + "─" * inner_w + "┐" + _RESET)
+        row += 1
+        title_pad = max(0, inner_w - len(title) - 2)
+        buf.append(_cup(row, col0) + t.bg_status + t.color_warning + _BOLD +
+                   f"│ ⚠  {title}" + " " * title_pad + "│" + _RESET)
+        row += 1
+        buf.append(_cup(row, col0) + t.bg_status + t.text_dim +
+                   "├" + "─" * inner_w + "┤" + _RESET)
+        row += 1
+
+        # Message lines
+        for line in lines:
+            vis_len = len(_strip_ansi(line))
+            pad = max(0, inner_w - vis_len - 2)
+            buf.append(_cup(row, col0) + t.bg_status + t.text_primary +
+                       f"│ {line}" + " " * pad + " │" + _RESET)
+            row += 1
+
+        # Separator before options
+        buf.append(_cup(row, col0) + t.bg_status + t.text_dim +
+                   "├" + "─" * inner_w + "┤" + _RESET)
+        row += 1
+
+        # Options row
+        opt_vis_len = len(_strip_ansi(opt_line))
+        opt_pad = max(0, inner_w - opt_vis_len - 2)
+        styled_opts = "".join(
+            f"{t.color_agent}[{k}]{_RESET}{t.text_primary} {label}  "
+            for k, label in options
+        )
+        buf.append(_cup(row, col0) + t.bg_status + t.text_primary +
+                   "│ " + styled_opts + " " * opt_pad + "│" + _RESET)
+        row += 1
+
+        # Bottom border
+        buf.append(_cup(row, col0) + t.bg_status + t.text_dim +
+                   "└" + "─" * inner_w + "┘" + _RESET)
+
+        self._write("".join(buf))
+
+        # Read a single keypress (ICANON is off, so we get chars immediately)
+        valid_keys = {k.lower() for k, _ in options}
+        choice = ""
+        while choice not in valid_keys:
+            try:
+                ch = sys.stdin.read(1)
+                choice = ch.lower()
+            except (EOFError, OSError):
+                choice = options[-1][0]
+                break
+
+        # Erase the dialog box
+        erase = []
+        for r in range(row0, row + 1):
+            erase.append(_cup(r, col0) + " " * w)
+        erase.append(_rc())
+        self._write("".join(erase))
+        self._full_render()
+        return choice
+
     # ── Animation thread ───────────────────────────────────────────────────────
 
     def _animate(self) -> None:
@@ -724,11 +827,71 @@ class InterruptMenu:
 
 # ── Utility ───────────────────────────────────────────────────────────────────
 
-import re as _re
-_ANSI_RE = _re.compile(r"\033\[[0-9;]*[mGKHJABCDfnRsu]|\033[78]")
+def _classify_error(exc: BaseException) -> tuple[str, str]:
+    """Return (dialog title, friendly message) for a given exception."""
+    msg = str(exc)
+
+    if "not available" in msg and ("model" in msg.lower() or "--model" in msg):
+        # Extract model name if present
+        import re
+        m = re.search(r'"([^"]+)"', msg)
+        model = m.group(1) if m else "the configured model"
+        return (
+            "Model Not Available",
+            f'The model "{model}" is not available for this backend.\n\n'
+            f"Edit agents.json to change the \"model\" field for this agent,\n"
+            f"or remove it to use the backend's default.",
+        )
+
+    if "No session or task matched" in msg or "not a valid UUID" in msg:
+        return (
+            "Stale Session",
+            "The saved session ID is no longer valid.\n\n"
+            "The session has been cleared. Press [r] to retry with a new session.",
+        )
+
+    if "copilot exited" in msg or "exited 1" in msg:
+        # Extract the actual error line from the backend
+        lines = [l.strip() for l in msg.splitlines() if l.strip()]
+        detail = lines[1] if len(lines) > 1 else lines[0] if lines else msg
+        return (
+            "Backend Error",
+            f"{detail}\n\nCheck that the CLI backend is installed and authenticated.",
+        )
+
+    if "No valid handoff block" in msg:
+        return (
+            "Handoff Parse Error",
+            "No valid ---HANDOFF--- block found in handoff.md.\n\n"
+            "The agent may not have written the required block, or the file\n"
+            "may be malformed. Edit handoff.md to fix it.",
+        )
+
+    if "Unknown agent" in msg:
+        return (
+            "Configuration Error",
+            f"{msg}\n\nEdit agents.json to fix the agent name.",
+        )
+
+    # Generic fallback
+    return (
+        f"{type(exc).__name__}",
+        msg if msg else "An unexpected error occurred.",
+    )
 
 def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
+
+def _wrap_text(text: str, width: int) -> list[str]:
+    """Word-wrap plain text to width, preserving existing newlines."""
+    import textwrap
+    result: list[str] = []
+    for paragraph in text.split("\n"):
+        if not paragraph.strip():
+            result.append("")
+        else:
+            result.extend(textwrap.wrap(paragraph, width) or [""])
+    return result
 
 
 # ── Factory ───────────────────────────────────────────────────────────────────

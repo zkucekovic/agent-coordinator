@@ -435,7 +435,16 @@ def run_coordinator(workspace: Path, max_turns: int, reset: bool, verbose: bool,
                             "agent": agent, "attempt": attempt, "error": str(e),
                         }})
                         display.finish_agent_turn(success=False)
-                        raise RuntimeError(f"Backend error: {e}") from e
+                        choice = _show_backend_error(display, e, workspace)
+                        if choice == "e":
+                            # Reload agents after editing
+                            config = load_config(workspace)
+                            agents = load_agent_config(config)
+                            runner_cache.clear()
+                        if choice == "q":
+                            return
+                        # retry or reloaded config — break out of attempt loop and re-run the turn
+                        break
 
                     session_store.set(agent, run_result.session_id)
                     hash_after = _file_hash(handoff_path)
@@ -509,14 +518,20 @@ def run_coordinator(workspace: Path, max_turns: int, reset: bool, verbose: bool,
 
     except Exception as exc:
         log_crash(exc, context="coordinator loop")
-        display.close()
-        from agent_coordinator.infrastructure.diagnostic_log import log_path
-        lp = log_path()
-        print(f"\n{'─'*60}", file=sys.stderr)
-        print(f"  CRASH: {type(exc).__name__}: {exc}", file=sys.stderr)
-        if lp:
-            print(f"  Details: {lp}", file=sys.stderr)
-        print(f"{'─'*60}", file=sys.stderr)
+        from agent_coordinator.infrastructure.diagnostic_log import log_path as _lp
+        lp = _lp()
+        try:
+            from agent_coordinator.infrastructure.tui import _classify_error
+            title, friendly = _classify_error(exc)
+            if lp:
+                friendly += f"\n\nLog: {lp}"
+            display.show_error_dialog(
+                title,
+                friendly,
+                [("q", "Quit")],
+            )
+        except Exception:
+            pass
         sys.exit(1)
     finally:
         display.close()
@@ -527,7 +542,42 @@ def run_coordinator(workspace: Path, max_turns: int, reset: bool, verbose: bool,
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _retry_prompt(agent: str, workspace: Path) -> str:
+def _show_backend_error(display: object, exc: Exception, workspace: Path) -> str:
+    """
+    Show a dialog for a backend error. Returns user choice:
+      'r' — retry, 'e' — edit agents.json + retry, 'q' — quit.
+    """
+    from agent_coordinator.infrastructure.tui import _classify_error
+    title, friendly = _classify_error(exc)
+
+    # Offer edit option only for config-related errors
+    msg_lower = str(exc).lower()
+    can_edit = any(kw in msg_lower for kw in ("model", "not available", "unknown agent", "configuration"))
+
+    options: list[tuple[str, str]] = [("r", "Retry")]
+    if can_edit:
+        options.append(("e", "Edit agents.json"))
+    options.append(("q", "Quit"))
+
+    choice = display.show_error_dialog(title, friendly, options)
+
+    if choice == "e":
+        _open_in_editor(workspace / "agents.json")
+
+    return choice
+
+
+def _open_in_editor(path: Path) -> None:
+    """Open a file in the user's editor."""
+    import subprocess
+    from agent_coordinator.infrastructure.editor import get_editor
+    editor = get_editor()
+    try:
+        subprocess.run([editor, str(path)], check=True)
+    except Exception as e:
+        get_logger().warning(f"editor failed: {e}")
+
+
     """Short, targeted prompt sent when an agent fails to update handoff.md."""
     return (
         f"Your previous turn did NOT append a handoff block to `{workspace}/handoff.md`. "
@@ -672,21 +722,23 @@ Examples:
     except SystemExit:
         raise
     except Exception as exc:
-        # Terminal may already be restored by run_coordinator's finally block.
-        # Log and print a clean crash message.
         from agent_coordinator.infrastructure.diagnostic_log import log_crash, log_path
         log_crash(exc, context="main")
         lp = log_path()
-        print(f"\n{'═'*60}", file=sys.stderr)
-        print(f"  FATAL: {type(exc).__name__}: {exc}", file=sys.stderr)
+        # Terminal is already restored by run_coordinator's finally block.
+        # Print a clean error — no raw traceback to the user.
+        from agent_coordinator.infrastructure.tui import _classify_error
+        title, friendly = _classify_error(exc)
+        w = 60
+        print(f"\n{'═'*w}", file=sys.stderr)
+        print(f"  {title}", file=sys.stderr)
+        print(f"{'─'*w}", file=sys.stderr)
+        for line in friendly.splitlines():
+            print(f"  {line}", file=sys.stderr)
         if lp:
-            print(f"  See diagnostic log: {lp}", file=sys.stderr)
-        else:
-            print(f"  Re-run with --workspace to get a diagnostic log", file=sys.stderr)
-        print(f"{'═'*60}", file=sys.stderr)
-        if args.quiet:
-            # In quiet mode print the traceback so it's visible somewhere
-            traceback.print_exc(file=sys.stderr)
+            print(f"{'─'*w}", file=sys.stderr)
+            print(f"  Log: {lp}", file=sys.stderr)
+        print(f"{'═'*w}", file=sys.stderr)
         sys.exit(1)
 
 
