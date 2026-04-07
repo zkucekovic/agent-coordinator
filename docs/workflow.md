@@ -144,7 +144,7 @@ If an agent fails to update `handoff.md` after its turn (observed occasionally w
 
 ## Parsing and Inspecting the Workflow
 
-The `src/workflow.py` module exposes `get_workflow_state(path)` for programmatic inspection:
+The `agent_coordinator/workflow.py` module exposes `get_workflow_state(path)` for programmatic inspection:
 
 ```python
 from src.workflow import get_workflow_state

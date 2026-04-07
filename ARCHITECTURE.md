@@ -16,7 +16,7 @@ Agent Coordinator follows **hexagonal architecture** (ports and adapters) with s
 └─────────────────┬───────────────────────────────────────┘
                   │
 ┌─────────────────▼───────────────────────────────────────┐
-│ APPLICATION LAYER (src/application/)                    │
+│ APPLICATION LAYER (agent_coordinator/application/)                    │
 │                                                          │
 │ ┌────────────────────────────────────────────────────┐ │
 │ │ WorkflowRouter                                      │ │
@@ -48,7 +48,7 @@ Agent Coordinator follows **hexagonal architecture** (ports and adapters) with s
 └─────────────────┬───────────────────────────────────────┘
                   │
 ┌─────────────────▼───────────────────────────────────────┐
-│ DOMAIN LAYER (src/domain/)                              │
+│ DOMAIN LAYER (agent_coordinator/domain/)                              │
 │                                                          │
 │ ┌────────────────────────────────────────────────────┐ │
 │ │ Models (handoff_block.py, task.py)                 │ │
@@ -71,7 +71,7 @@ Agent Coordinator follows **hexagonal architecture** (ports and adapters) with s
 └─────────────────┬───────────────────────────────────────┘
                   │
 ┌─────────────────▼───────────────────────────────────────┐
-│ INFRASTRUCTURE LAYER (src/infrastructure/)              │
+│ INFRASTRUCTURE LAYER (agent_coordinator/infrastructure/)              │
 │                                                          │
 │ ┌────────────────────────────────────────────────────┐ │
 │ │ Runners (runners/)                                  │ │
@@ -228,6 +228,10 @@ If task exceeds max_rework cycles:
 agent-coordinator/
 ├── agent_coordinator/
 │   ├── cli.py                    # Entry point, orchestration loop
+│   ├── domain/                   # Pure data models, state machine, retry policy
+│   ├── application/              # Router, TaskService, PromptBuilder, AgentRunner
+│   ├── infrastructure/           # Runners, file I/O, TUI, event log
+│   ├── handoff_parser.py         # Regex-based parser for handoff blocks
 │   ├── prompts/                  # Agent instructions (shipped with package)
 │   │   ├── architect.md
 │   │   ├── developer.md
@@ -235,24 +239,6 @@ agent-coordinator/
 │   │   ├── shared_rules.md       # Protocol rules for all agents
 │   │   └── agent_template.md     # Template for new roles
 │   └── helpers/                  # Helper scripts (task creator, etc.)
-├── src/
-│   ├── domain/
-│   │   ├── models.py             # HandoffBlock, Task, RunResult
-│   │   ├── lifecycle.py          # Task state machine
-│   │   └── retry_policy.py       # Rework limits and escalation
-│   ├── application/
-│   │   ├── router.py             # WorkflowRouter (dispatch logic)
-│   │   ├── task_service.py       # TaskService (sync tasks.json)
-│   │   ├── prompt_builder.py     # PromptBuilder (injection logic)
-│   │   └── runner.py             # AgentRunner interface
-│   └── infrastructure/
-│       ├── runners/
-│       │   ├── opencode.py       # OpencodeRunner
-│       │   ├── claude.py         # ClaudeRunner
-│       │   ├── copilot.py        # CopilotRunner
-│       │   └── manual.py         # ManualRunner
-│       ├── handoff_parser.py     # Extract blocks from handoff.md
-│       └── file_store.py         # Read/write JSON and text files
 ├── tests/
 │   ├── test_*.py                 # Unit tests (188 tests, no I/O)
 │   └── integration/              # Integration tests (real backends)
@@ -275,8 +261,8 @@ agent-coordinator/
 Implement `AgentRunner` interface:
 
 ```python
-from src.application.runner import AgentRunner
-from src.domain.models import RunResult
+from agent_coordinator.application.runner import AgentRunner
+from agent_coordinator.domain.models import RunResult
 
 class MyRunner(AgentRunner):
     def run(self, message, workspace, session_id=None, model=None):

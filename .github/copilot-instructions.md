@@ -24,7 +24,7 @@ agent-coordinator --workspace ./workspace --max-turns 20
 
 ## Architecture
 
-This project follows **hexagonal architecture** with three layers. The installable package is `agent_coordinator/` — **do not confuse with `src/`**, which is an older parallel copy and is not imported by the active code.
+This project follows **hexagonal architecture** with three layers. The installable package is `agent_coordinator/`.
 
 ```
 agent_coordinator/
@@ -67,6 +67,3 @@ Role prompt → AGENTS.md (project rules) → SPECIFICATION.md / plan.md → sha
 
 ### Session persistence
 Agent session IDs are stored in `<workspace>/.coordinator_sessions.json` (gitignored). Re-running the coordinator resumes context. Use `--reset` to clear sessions.
-
-### `src/` directory
-This directory mirrors parts of `agent_coordinator/` but is not used by the installed package. It may be removed in a future cleanup.
