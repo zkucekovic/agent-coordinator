@@ -445,6 +445,7 @@ class _CoordinatorContext:
     interrupt_menu: Any
     verbose: bool
     auto: bool
+    stateless: bool
     logger: Any
     turn_counts: dict[str, int] = dataclasses.field(default_factory=dict)
     total_turns: int = 0
@@ -459,6 +460,7 @@ def _setup_coordinator(
     streaming: bool,
     display: Any,
     auto: bool,
+    stateless: bool = False,
 ) -> _CoordinatorContext | None:
     """Initialise all coordinator state.
 
@@ -476,6 +478,7 @@ def _setup_coordinator(
                 "max_turns": max_turns,
                 "verbose": verbose,
                 "streaming": streaming,
+                "stateless": stateless,
             }
         },
     )
@@ -559,6 +562,7 @@ def _setup_coordinator(
         interrupt_menu=interrupt_menu,
         verbose=verbose,
         auto=auto,
+        stateless=stateless,
         logger=logger,
     )
 
@@ -701,7 +705,7 @@ def _run_agent_turn(ctx: _CoordinatorContext, agent: str, message: Any, status: 
     backend_name = agent_cfg.get("backend", ctx.default_backend)
 
     next_task = ctx.task_service.next_ready_task() if ctx.task_service else None
-    first_turn = ctx.session_store.get(agent) is None
+    first_turn = True if ctx.stateless else ctx.session_store.get(agent) is None
     prompt = ctx.builder.build(agent, ctx.workspace, ctx.handoff_reader.read_raw(), agent_cfg, next_task, first_turn)
 
     # ── Prompt persistence (1.2) ──────────────────────────────────────
@@ -744,7 +748,7 @@ def _run_agent_turn(ctx: _CoordinatorContext, agent: str, message: Any, status: 
             run_result = runner.run(
                 message=prompt if attempt == 0 else _retry_prompt(agent, ctx.workspace),
                 workspace=ctx.workspace,
-                session_id=ctx.session_store.get(agent),
+                session_id=None if ctx.stateless else ctx.session_store.get(agent),
                 model=agent_cfg.get("model"),
                 on_output=_on_output,
             )
@@ -771,7 +775,8 @@ def _run_agent_turn(ctx: _CoordinatorContext, agent: str, message: Any, status: 
             # retry or reloaded config — break out of attempt loop and re-run the turn
             break
 
-        ctx.session_store.set(agent, run_result.session_id)
+        if not ctx.stateless:
+            ctx.session_store.set(agent, run_result.session_id)
         hash_after = _file_hash(ctx.handoff_path)
 
         if hash_after != hash_before:
@@ -949,8 +954,9 @@ def run_coordinator(
     streaming: bool = True,
     display=None,
     auto: bool = False,
+    stateless: bool = False,
 ) -> None:
-    ctx = _setup_coordinator(workspace, max_turns, reset, verbose, output_lines, streaming, display, auto)
+    ctx = _setup_coordinator(workspace, max_turns, reset, verbose, output_lines, streaming, display, auto, stateless)
     if ctx is None:
         return
 
@@ -1250,6 +1256,7 @@ def _run_from_workspace(workspace: Path, args: argparse.Namespace, display=None)
             output_lines=args.output_lines,
             streaming=not args.no_streaming,
             display=display,
+            stateless=args.stateless,
         )
     except SystemExit:
         raise
@@ -1307,6 +1314,11 @@ Examples:
         "--no-streaming", action="store_true", help="Print agent output all at once instead of streaming it"
     )
     parser.add_argument("--auto", action="store_true", help="Skip the startup menu and run immediately")
+    parser.add_argument(
+        "--stateless",
+        action="store_true",
+        help="Run agents without session persistence (fresh context every turn)",
+    )
 
     # ── Import arguments ──────────────────────────────────────────────────────
     parser.add_argument(
@@ -1369,6 +1381,7 @@ Examples:
             output_lines=args.output_lines,
             streaming=not args.no_streaming,
             auto=args.auto,
+            stateless=args.stateless,
         )
     except SystemExit:
         raise

@@ -125,6 +125,7 @@ Each agent can use a different backend. Built-in: `copilot`, `claude`, `opencode
 | `--quiet` | | Suppress TUI output |
 | `--output-lines N` | `10` | Agent output lines shown in TUI |
 | `--no-streaming` | | Show output all at once instead of streaming |
+| `--stateless` | | Run agents without session persistence (fresh context every turn) |
 | `--import FILE` | | Import a specification or plan into workspace |
 | `--type spec\|plan` | auto | Force document type when importing |
 | `--force` | | Overwrite existing files when importing |
@@ -139,7 +140,7 @@ Drop these in your workspace to inject them into agent prompts on first turn:
 
 ### Sessions
 
-Session IDs are saved in `<workspace>/.agent-coordinator/sessions.json`. Re-running resumes where you left off. Use `--reset` to start clean.
+Session IDs are saved in `<workspace>/.agent-coordinator/sessions.json`. Re-running resumes where you left off. Use `--reset` to start clean, or `--stateless` to skip session persistence entirely (every turn gets a fresh context with the full prompt).
 
 ## Interactive control
 

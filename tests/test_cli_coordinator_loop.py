@@ -279,5 +279,84 @@ def _apply_patches(patches) -> "_PatchStack":
     return _PatchStack(patches)
 
 
+class TestRunCoordinatorStateless(unittest.TestCase):
+    """stateless=True → session_id=None on every call, first_turn always True."""
+
+    def _make_mock_runner(self, ws: Path) -> MagicMock:
+        def _run_side_effect(**kwargs):
+            (ws / "handoff.md").write_text(_HANDOFF_PLAN_COMPLETE)
+            return RunResult(session_id="sess-abc", text="done")
+
+        runner = MagicMock()
+        runner.run.side_effect = _run_side_effect
+        return runner
+
+    def test_stateless_passes_no_session_id(self):
+        ws = _make_workspace(_HANDOFF_CONTINUE)
+        display = _mock_display()
+        runner = self._make_mock_runner(ws)
+        mock_builder = MagicMock(**{"build.return_value": "test prompt"})
+
+        patches = [
+            *_common_patches(),
+            patch("agent_coordinator.infrastructure.tui.create_display", return_value=display),
+            patch("agent_coordinator.cli.create_runner_for_agent", return_value=runner),
+            patch("agent_coordinator.cli.PromptBuilder", return_value=mock_builder),
+        ]
+        with _apply_patches(patches):
+            from agent_coordinator.cli import run_coordinator
+
+            run_coordinator(workspace=ws, max_turns=5, reset=False, verbose=False, stateless=True)
+
+        # runner.run must have been called with session_id=None
+        call_kwargs = runner.run.call_args.kwargs
+        self.assertIsNone(call_kwargs.get("session_id"))
+
+    def test_stateless_always_sends_first_turn_prompt(self):
+        ws = _make_workspace(_HANDOFF_CONTINUE)
+        display = _mock_display()
+        runner = self._make_mock_runner(ws)
+        mock_builder = MagicMock(**{"build.return_value": "test prompt"})
+
+        patches = [
+            *_common_patches(),
+            patch("agent_coordinator.infrastructure.tui.create_display", return_value=display),
+            patch("agent_coordinator.cli.create_runner_for_agent", return_value=runner),
+            patch("agent_coordinator.cli.PromptBuilder", return_value=mock_builder),
+        ]
+        with _apply_patches(patches):
+            from agent_coordinator.cli import run_coordinator
+
+            run_coordinator(workspace=ws, max_turns=5, reset=False, verbose=False, stateless=True)
+
+        # PromptBuilder.build must have been called with first_turn=True
+        build_args = mock_builder.build.call_args
+        # first_turn is the 6th positional arg
+        self.assertTrue(build_args.args[5] if len(build_args.args) > 5 else build_args.kwargs.get("first_turn"))
+
+    def test_stateless_does_not_persist_session(self):
+        ws = _make_workspace(_HANDOFF_CONTINUE)
+        display = _mock_display()
+        runner = self._make_mock_runner(ws)
+        mock_store = MagicMock()
+
+        patches = [
+            *_common_patches(),
+            patch("agent_coordinator.infrastructure.tui.create_display", return_value=display),
+            patch("agent_coordinator.cli.create_runner_for_agent", return_value=runner),
+            patch(
+                "agent_coordinator.cli.PromptBuilder", return_value=MagicMock(**{"build.return_value": "test prompt"})
+            ),
+            patch("agent_coordinator.cli.SessionStore", return_value=mock_store),
+        ]
+        with _apply_patches(patches):
+            from agent_coordinator.cli import run_coordinator
+
+            run_coordinator(workspace=ws, max_turns=5, reset=False, verbose=False, stateless=True)
+
+        # session_store.set() must NOT be called in stateless mode
+        mock_store.set.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
