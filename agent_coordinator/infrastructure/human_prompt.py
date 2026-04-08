@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 
 def prompt_human_input(handoff_path: Path, task_id: str, current_status: str, display=None) -> str:
@@ -59,11 +60,11 @@ def _prompt_tui(handoff_path: Path, task_id: str, current_status: str, display) 
             display._append_content(f"  {t.color_success}✓  Response added → routing to {next_agent}\033[0m")
             return "continue"
 
-        elif choice == "e":
+        if choice == "e":
             display.with_editor(handoff_path)
             return "continue"
 
-        elif choice == "v":
+        if choice == "v":
             if handoff_path.exists():
                 lines_view = handoff_path.read_text(errors="replace").splitlines()
                 display._append_content(f"  {t.text_dim}── handoff.md ({'last 30 lines'}) ──\033[0m")
@@ -121,7 +122,7 @@ def _prompt_plain(handoff_path: Path, task_id: str, current_status: str) -> str:
             print("═" * 70)
             return "continue"
 
-        elif choice == "e":
+        if choice == "e":
             from agent_coordinator.infrastructure.editor import get_editor
 
             editor = get_editor()
@@ -132,7 +133,7 @@ def _prompt_plain(handoff_path: Path, task_id: str, current_status: str) -> str:
             print("═" * 70)
             return "continue"
 
-        elif choice == "v":
+        if choice == "v":
             if handoff_path.exists():
                 print("\n" + "─" * 70)
                 for ln in handoff_path.read_text().splitlines()[-30:]:
@@ -207,44 +208,90 @@ def _prompt_human_input_plain(handoff_path: Path, task_id: str, current_status: 
         choice = enhanced_choice(prompt, choices=["r", "e", "v", "q"])
 
         if choice == "r":
-            # Get human response and create new handoff block
-            print("\n" + Colors.info("Provide your response/guidance:"))
-            print(Colors.info("(This will be added to the handoff for the next agent)"))
-            print()
+            result = _handle_respond(handoff_path, task_id, Colors, enhanced_input, enhanced_multiline)
+            if result:
+                return result
+            continue
 
-            response = enhanced_multiline("", Colors.prompt("> "))
+        if choice == "e":
+            result = _handle_edit(handoff_path, Colors)
+            if result:
+                return result
+            continue
 
-            if not response.strip():
-                print(Colors.warning("No response entered. Try again."))
-                continue
+        if choice == "v":
+            _handle_view(handoff_path, Colors, enhanced_input)
+            continue
 
-            # Ask which agent should receive this
-            print()
-            next_agent = (
-                enhanced_input(
-                    Colors.prompt("Route to agent [architect/developer/qa_engineer/helper]: "), default="architect"
-                )
-                .strip()
-                .lower()
-            )
+        if choice == "q":
+            print("═" * 70)
+            return "quit"
 
-            if not next_agent:
-                next_agent = "architect"
+        print("Invalid choice. Try again.")
 
-            # Decide if we should format with helper agent
-            use_helper = False
-            if next_agent != "helper":
-                format_choice = (
-                    enhanced_input(Colors.prompt("Format with helper agent first? [y/N]: "), default="n")
-                    .strip()
-                    .lower()
-                )
-                use_helper = format_choice in ["y", "yes"]
 
-            if use_helper:
-                # Route to helper first to format the human input
-                timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-                handoff_block = f"""
+def _handle_respond(
+    handoff_path: Path,
+    task_id: str,
+    colors: Any,
+    enhanced_input_fn: Any,
+    enhanced_multiline_fn: Any,
+) -> str:
+    """Handle the 'respond' choice in _prompt_human_input_plain."""
+    print("\n" + colors.info("Provide your response/guidance:"))
+    print(colors.info("(This will be added to the handoff for the next agent)"))
+    print()
+
+    response = enhanced_multiline_fn("", colors.prompt("> "))
+
+    if not response.strip():
+        print(colors.warning("No response entered. Try again."))
+        return ""  # signal to caller to continue the loop
+
+    print()
+    next_agent = (
+        enhanced_input_fn(
+            colors.prompt("Route to agent [architect/developer/qa_engineer/helper]: "), default="architect"
+        )
+        .strip()
+        .lower()
+    )
+
+    if not next_agent:
+        next_agent = "architect"
+
+    use_helper = False
+    if next_agent != "helper":
+        format_choice = (
+            enhanced_input_fn(colors.prompt("Format with helper agent first? [y/N]: "), default="n").strip().lower()
+        )
+        use_helper = format_choice in ["y", "yes"]
+
+    handoff_block = _build_respond_handoff(task_id, response, next_agent, use_helper)
+
+    if use_helper:
+        print()
+        print(colors.info("✓ Routing to helper agent for formatting"))
+        print(colors.info(f"  Helper will format and route to: {next_agent}"))
+
+    with open(handoff_path, "a") as f:
+        f.write(handoff_block)
+
+    print()
+    print(colors.success("✓ Response added to handoff.md"))
+    if use_helper:
+        print(colors.success(f"✓ Routing to: helper → {next_agent}"))
+    else:
+        print(colors.success(f"✓ Routing to: {next_agent}"))
+    print("═" * 70)
+    return "continue"
+
+
+def _build_respond_handoff(task_id: str, response: str, next_agent: str, use_helper: bool) -> str:
+    """Build the handoff block for a human response."""
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    if use_helper:
+        return f"""
 ---HANDOFF---
 ROLE: system
 STATUS: continue
@@ -268,13 +315,7 @@ CONSTRAINTS:
 - Follow handoff format standards
 ---END---
 """
-                print()
-                print(Colors.info("✓ Routing to helper agent for formatting"))
-                print(Colors.info(f"  Helper will format and route to: {next_agent}"))
-            else:
-                # Create new handoff block with human response directly
-                timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-                handoff_block = f"""
+    return f"""
 ---HANDOFF---
 ROLE: human
 STATUS: continue
@@ -307,48 +348,31 @@ BLOCKERS:
 ---END---
 """
 
-            with open(handoff_path, "a") as f:
-                f.write(handoff_block)
 
-            print()
-            print(Colors.success("✓ Response added to handoff.md"))
-            if use_helper:
-                print(Colors.success(f"✓ Routing to: helper → {next_agent}"))
-            else:
-                print(Colors.success(f"✓ Routing to: {next_agent}"))
-            print("═" * 70)
-            return "continue"
+def _handle_edit(handoff_path: Path, colors: Any) -> str:
+    """Handle the 'edit' choice in _prompt_human_input_plain."""
+    from agent_coordinator.infrastructure.editor import get_editor
 
-        elif choice == "e":
-            from agent_coordinator.infrastructure.editor import get_editor
+    editor = get_editor()
+    print(f"\nOpening handoff.md in {editor}...")
+    try:
+        subprocess.run([editor, str(handoff_path)], check=True)
+        print(colors.success("Handoff updated"))
+        print("═" * 70)
+        return "continue"
+    except Exception as e:
+        print(colors.error(f"Editor error: {e}"))
+        return ""  # signal to caller to continue the loop
 
-            editor = get_editor()
-            print(f"\nOpening handoff.md in {editor}...")
-            try:
-                subprocess.run([editor, str(handoff_path)], check=True)
-                print(Colors.success("Handoff updated"))
-                print("═" * 70)
-                return "continue"
-            except Exception as e:
-                print(Colors.error(f"Editor error: {e}"))
-                continue
 
-        elif choice == "v":
-            if handoff_path.exists():
-                print("\nCurrent handoff.md:")
-                print("─" * 70)
-                content = handoff_path.read_text()
-                # Show last 50 lines
-                lines = content.split("\n")
-                for line in lines[-50:]:
-                    print(line)
-                print("─" * 70)
-            enhanced_input(Colors.prompt("\nPress Enter to continue..."))
-            continue
-
-        elif choice == "q":
-            print("═" * 70)
-            return "quit"
-
-        else:
-            print("Invalid choice. Try again.")
+def _handle_view(handoff_path: Path, colors: Any, enhanced_input_fn: Any) -> None:
+    """Handle the 'view' choice in _prompt_human_input_plain."""
+    if handoff_path.exists():
+        print("\nCurrent handoff.md:")
+        print("─" * 70)
+        content = handoff_path.read_text()
+        lines = content.split("\n")
+        for line in lines[-50:]:
+            print(line)
+        print("─" * 70)
+    enhanced_input_fn(colors.prompt("\nPress Enter to continue..."))

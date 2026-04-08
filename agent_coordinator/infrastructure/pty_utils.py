@@ -100,14 +100,8 @@ def run_with_pty(
 _MAX_CHUNKS_BYTES = 10_000_000  # 10 MB safety cap for captured output
 
 
-def _run_pty(
-    cmd: list[str],
-    cwd: Path | None,
-    env: dict | None,
-    on_output: Callable[[str], None] | None,
-) -> PtyResult:
-    import subprocess
-
+def _setup_pty() -> tuple[int, int, int, int]:
+    """Create PTY pair and stderr pipe. Returns (master_fd, slave_fd, stderr_r, stderr_w)."""
     master_fd, slave_fd = _pty.openpty()
 
     # Match the real terminal window size so TUI-style agents render correctly
@@ -119,6 +113,110 @@ def _run_pty(
 
     # Separate pipe for stderr (no PTY noise, needed for session-ID extraction)
     stderr_r, stderr_w = os.pipe()
+    return master_fd, slave_fd, stderr_r, stderr_w
+
+
+def _read_pty_output(
+    master_fd: int,
+    done: threading.Event,
+    chunks: list[str],
+    chunks_bytes_ref: list[int],
+    on_output: Callable[[str], None] | None,
+) -> None:
+    """Reader thread target: read from master_fd, strip ANSI, collect chunks."""
+    buf = b""
+    while not done.is_set():
+        try:
+            r, _, _ = select.select([master_fd], [], [], 0.05)
+        except (ValueError, OSError):
+            break
+        if not r:
+            continue
+        try:
+            data = os.read(master_fd, 4096)
+        except OSError:
+            break
+        if not data:
+            break
+        buf += data
+        while b"\n" in buf:
+            line_b, buf = buf.split(b"\n", 1)
+            line = _strip(line_b.decode("utf-8", errors="replace")) + "\n"
+            if chunks_bytes_ref[0] < _MAX_CHUNKS_BYTES:
+                chunks.append(line)
+                chunks_bytes_ref[0] += len(line)
+            if on_output:
+                on_output(line)
+    # Flush any remaining partial line
+    if buf:
+        line = _strip(buf.decode("utf-8", errors="replace"))
+        if line.strip():
+            if chunks_bytes_ref[0] < _MAX_CHUNKS_BYTES:
+                chunks.append(line)
+                chunks_bytes_ref[0] += len(line)
+            if on_output:
+                on_output(line)
+
+
+def _forward_stdin(master_fd: int, done: threading.Event) -> None:
+    """Forward real terminal keystrokes → PTY master for permission prompts.
+
+    Ctrl+C (0x03) is NOT forwarded — Python's SIGINT handler deals
+    with it; forwarding it would double-kill the subprocess.
+
+    Does nothing if stdin is not a TTY (e.g. piped or nested session).
+    """
+    if not sys.stdin.isatty():
+        return
+    while not done.is_set():
+        try:
+            r, _, _ = select.select([sys.stdin], [], [], 0.1)
+        except (ValueError, OSError):
+            break
+        if not r:
+            continue
+        try:
+            data = os.read(sys.stdin.fileno(), 256)
+        except OSError:
+            break
+        if not data:
+            break
+        # Drop Ctrl+C byte — handled via SIGINT
+        data = data.replace(b"\x03", b"")
+        if data:
+            try:
+                os.write(master_fd, data)
+            except OSError:
+                break
+
+
+def _drain_stderr(stderr_r: int) -> bytes:
+    """Drain all available data from the stderr pipe."""
+    stderr_data = b""
+    try:
+        os.set_blocking(stderr_r, False)
+        while True:
+            try:
+                chunk = os.read(stderr_r, 4096)
+                if not chunk:
+                    break
+                stderr_data += chunk
+            except BlockingIOError:
+                break
+    except Exception:
+        pass
+    return stderr_data
+
+
+def _run_pty(
+    cmd: list[str],
+    cwd: Path | None,
+    env: dict | None,
+    on_output: Callable[[str], None] | None,
+) -> PtyResult:
+    import subprocess
+
+    master_fd, slave_fd, stderr_r, stderr_w = _setup_pty()
 
     # Track FDs that still need closing on error
     open_fds = {master_fd, slave_fd, stderr_r, stderr_w}
@@ -141,97 +239,29 @@ def _run_pty(
         )
     except Exception:
         # Clean up all FDs if Popen fails
-        for fd in list(open_fds):
+        for fd in open_fds:
             _close_fd(fd)
         raise
 
     _close_fd(slave_fd)
     _close_fd(stderr_w)
 
-    # ── Save current terminal state ───────────────────────────────────────────
-    # Our TUI runs with ICANON+ECHO disabled.  We do NOT change the real
-    # terminal here — the PTY slave starts with its own default settings
-    # (ICANON+ECHO enabled) so the subprocess gets normal line-editing.
-    # We forward raw bytes from our real stdin → PTY master; the slave's
-    # ICANON assembles them into lines for the subprocess.
-
     chunks: list[str] = []
-    chunks_bytes: int = 0
+    chunks_bytes_ref: list[int] = [0]
     done = threading.Event()
 
-    # ── Output reader ─────────────────────────────────────────────────────────
-    def _read_output() -> None:
-        nonlocal chunks_bytes
-        buf = b""
-        while not done.is_set():
-            try:
-                r, _, _ = select.select([master_fd], [], [], 0.05)
-            except (ValueError, OSError):
-                break
-            if not r:
-                continue
-            try:
-                data = os.read(master_fd, 4096)
-            except OSError:
-                break
-            if not data:
-                break
-            buf += data
-            # Emit complete lines immediately; hold back incomplete lines
-            while b"\n" in buf:
-                line_b, buf = buf.split(b"\n", 1)
-                line = _strip(line_b.decode("utf-8", errors="replace")) + "\n"
-                if chunks_bytes < _MAX_CHUNKS_BYTES:
-                    chunks.append(line)
-                    chunks_bytes += len(line)
-                if on_output:
-                    on_output(line)
-        # Flush any remaining partial line
-        if buf:
-            line = _strip(buf.decode("utf-8", errors="replace"))
-            if line.strip():
-                if chunks_bytes < _MAX_CHUNKS_BYTES:
-                    chunks.append(line)
-                    chunks_bytes += len(line)
-                if on_output:
-                    on_output(line)
-
-    # ── Stdin forwarder ───────────────────────────────────────────────────────
-    def _forward_stdin() -> None:
-        """
-        Forward real terminal keystrokes → PTY master so the subprocess
-        can receive user input for permission prompts.
-
-        Ctrl+C (0x03) is NOT forwarded — Python's SIGINT handler deals
-        with it; forwarding it would double-kill the subprocess.
-
-        Does nothing if stdin is not a TTY (e.g. piped or nested session).
-        """
-        if not sys.stdin.isatty():
-            return
-        while not done.is_set():
-            try:
-                r, _, _ = select.select([sys.stdin], [], [], 0.1)
-            except (ValueError, OSError):
-                break
-            if not r:
-                continue
-            try:
-                data = os.read(sys.stdin.fileno(), 256)
-            except OSError:
-                break
-            if not data:
-                break
-            # Drop Ctrl+C byte — handled via SIGINT
-            data = data.replace(b"\x03", b"")
-            if data:
-                try:
-                    os.write(master_fd, data)
-                except OSError:
-                    break
-
-    out_thread = threading.Thread(target=_read_output, daemon=True, name="pty-out")
-    in_thread = threading.Thread(target=_forward_stdin, daemon=True, name="pty-in")
+    out_thread = threading.Thread(
+        target=_read_pty_output,
+        args=(master_fd, done, chunks, chunks_bytes_ref, on_output),
+        daemon=True,
+        name="pty-out",
+    )
+    in_thread = threading.Thread(
+        target=_forward_stdin,
+        args=(master_fd, done),
+        daemon=True,
+        name="pty-in",
+    )
     out_thread.start()
     in_thread.start()
 
@@ -246,20 +276,7 @@ def _run_pty(
     out_thread.join(timeout=2)
     in_thread.join(timeout=0.5)
 
-    # Drain stderr
-    stderr_data = b""
-    try:
-        os.set_blocking(stderr_r, False)
-        while True:
-            try:
-                chunk = os.read(stderr_r, 4096)
-                if not chunk:
-                    break
-                stderr_data += chunk
-            except BlockingIOError:
-                break
-    except Exception:
-        pass
+    stderr_data = _drain_stderr(stderr_r)
 
     _close_fd(master_fd)
     _close_fd(stderr_r)
@@ -312,6 +329,7 @@ def _run_pipe(
         capture_output=True,
         text=True,
         cwd=cwd,
+        check=False,
         env=env,
     )
     if on_output and result.stdout:

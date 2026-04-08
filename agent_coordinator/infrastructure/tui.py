@@ -117,28 +117,25 @@ class Theme:
     Background colors use _bc(); foreground colors use _tc().
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         name: str,
-        # Status / header bars
+        *,
         bg_header: str,
         bg_status: str,
         bg_separator: str,
-        # Agent LED states
-        led_running: str,  # ● blinking — agent active
-        led_done: str,  # ● steady   — finished last turn, idle now
-        led_error: str,  # ● steady
-        led_blocked: str,  # ● steady
-        led_idle: str,  # ○ — never ran
-        # Text
+        led_running: str,
+        led_done: str,
+        led_error: str,
+        led_blocked: str,
+        led_idle: str,
         text_primary: str,
         text_secondary: str,
         text_dim: str,
-        # Syntax
-        color_agent: str,  # agent name in turn headers
-        color_success: str,  # ✓ markers
-        color_warning: str,  # ✗ / warnings
-        color_info: str,  # info lines
+        color_agent: str,
+        color_success: str,
+        color_warning: str,
+        color_info: str,
     ) -> None:
         self.name = name
         self.bg_header = bg_header
@@ -164,7 +161,7 @@ class Theme:
 def _catppuccin_frappe() -> Theme:
     """Catppuccin Frappé — https://github.com/catppuccin/catppuccin"""
     return Theme(
-        name="catppuccin-frappe",
+        "catppuccin-frappe",
         bg_header=_bc(41, 44, 60),  # Mantle  #292c3c
         bg_status=_bc(35, 38, 52),  # Crust   #232634
         bg_separator=_bc(65, 69, 89),  # Surface1 #414559 — slightly lighter
@@ -193,7 +190,7 @@ def _dark_default() -> Theme:
         return _csi(f"48;5;{n}m")
 
     return Theme(
-        name="dark",
+        "dark",
         bg_header=b(235),
         bg_status=b(236),
         bg_separator=b(238),
@@ -324,73 +321,135 @@ class Popup:
         cap_w = min(scr._cols - 4, 72)
         cap_inner = cap_w - 2
 
-        # -- Prepare body lines ------------------------------------------------
-        if isinstance(body, str) and body:
-            body_lines = _wrap_text(body, cap_inner - 2)
-        elif isinstance(body, list):
-            body_lines = body
-        else:
-            body_lines = []
-
-        # -- Measure content widths to auto-size the box -----------------------
         icon_str = f"{icon}  " if icon else ""
         title_text = f"{icon_str}{title}"
-        widths: list[int] = [len(title_text)]
-        for line in body_lines:
-            widths.append(len(_strip_ansi(line)))
 
-        valid_keys: set[str] = set()
+        body_lines = self._prepare_body(body, cap_inner)
+        item_rows, item_keys, item_widths = self._prepare_items(items)
+        widths = [len(title_text)]
+        widths.extend(len(_strip_ansi(line)) for line in body_lines)
+        widths.extend(item_widths)
 
-        # -- Prepare menu items (vertical, one per row) ------------------------
+        valid_keys = set(item_keys)
+
+        opt_rows, opt_keys, inner_w = self._prepare_options(options, widths, cap_inner)
+        valid_keys.update(opt_keys)
+        max_w = inner_w + 2
+
+        dims = self._compute_dimensions(
+            scr,
+            body_lines,
+            opt_rows,
+            item_rows,
+            max_w,
+        )
+        row0, col0, _h = dims
+
+        row = self._render_popup(
+            scr,
+            t,
+            title_text,
+            title_color,
+            body_lines,
+            item_rows,
+            opt_rows,
+            inner_w,
+            row0,
+            col0,
+        )
+
+        choice = self._read_choice(valid_keys, options, items)
+
+        erase: list[str] = []
+        erase.extend(_cup(r, col0) + " " * max_w for r in range(row0, row + 1))
+        erase.append(_rc())
+        scr._write("".join(erase))
+        scr._full_render()
+        return choice
+
+    # ── Internal helpers ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _prepare_body(body: str | list[str], cap_inner: int) -> list[str]:
+        if isinstance(body, str) and body:
+            return _wrap_text(body, cap_inner - 2)
+        if isinstance(body, list):
+            return body
+        return []
+
+    @staticmethod
+    def _prepare_items(
+        items: list[tuple[str, str] | None] | None,
+    ) -> tuple[list[tuple[str, str] | None], list[str], list[int]]:
+        """Return (item_rows, valid_keys, width_contributions)."""
         item_rows: list[tuple[str, str] | None] = []
+        valid_keys: list[str] = []
+        widths: list[int] = []
         if items:
             for entry in items:
                 if entry is None:
                     item_rows.append(None)
                 else:
                     item_rows.append(entry)
-                    valid_keys.add(entry[0].lower())
+                    valid_keys.append(entry[0].lower())
                     k_display = entry[0] if entry[0].startswith("/") else f"[{entry[0]}]"
                     widths.append(len(f"  {k_display}  {entry[1]}"))
+        return item_rows, valid_keys, widths
 
-        # -- Prepare option rows (horizontal, flow-wrapped) --------------------
-        # We need inner_w first to compute wrapping, so compute preliminary
+    @staticmethod
+    def _flow_wrap_options(
+        options: list[tuple[str, str]],
+        max_width: int,
+    ) -> list[list[tuple[str, str]]]:
+        """Wrap option pairs into rows that fit within max_width."""
+        rows: list[list[tuple[str, str]]] = [[]]
+        row_len = 0
+        for k, label in options:
+            part_len = len(f"[{k}] {label}  ")
+            if rows[-1] and row_len + part_len > max_width - 1:
+                rows.append([])
+                row_len = 0
+            rows[-1].append((k, label))
+            row_len += part_len
+        return rows
+
+    @staticmethod
+    def _prepare_options(
+        options: list[tuple[str, str]] | None,
+        widths: list[int],
+        cap_inner: int,
+    ) -> tuple[list[list[tuple[str, str]]], list[str], int]:
+        """Return (opt_rows, valid_keys, final inner_w)."""
+        valid_keys: list[str] = []
+        if not options:
+            inner_w = min(max(w + 1 for w in widths), cap_inner)
+            return [], valid_keys, inner_w
+
+        # Preliminary inner_w for first wrapping pass
+        inner_w = min(max(w + 1 for w in widths), cap_inner)
+        opt_rows = Popup._flow_wrap_options(options, inner_w)
+
+        for k, _ in options:
+            valid_keys.append(k.lower())
+
+        # Add option row widths and recompute final inner_w
+        widths = list(widths)
+        widths.extend(sum(len(f"[{k}] {label}  ") for k, label in orow) for orow in opt_rows)
         inner_w = min(max(w + 1 for w in widths), cap_inner)
 
-        opt_rows: list[list[tuple[str, str]]] = []
+        # Re-wrap with final inner_w
+        opt_rows = Popup._flow_wrap_options(options, inner_w)
+        return opt_rows, valid_keys, inner_w
 
-        if options:
-            opt_rows.append([])
-            row_len = 0
-            for k, label in options:
-                valid_keys.add(k.lower())
-                part_len = len(f"[{k}] {label}  ")
-                if opt_rows[-1] and row_len + part_len > inner_w - 1:
-                    opt_rows.append([])
-                    row_len = 0
-                opt_rows[-1].append((k, label))
-                row_len += part_len
-            # Add option row widths
-            for orow in opt_rows:
-                widths.append(sum(len(f"[{k}] {label}  ") for k, label in orow))
-
-        # Final inner_w: fit widest content + 1 char padding, capped
-        inner_w = min(max(w + 1 for w in widths), cap_inner)
-        max_w = inner_w + 2
-
-        # Re-wrap options with final inner_w
-        if options:
-            opt_rows = [[]]
-            row_len = 0
-            for k, label in options:
-                part_len = len(f"[{k}] {label}  ")
-                if opt_rows[-1] and row_len + part_len > inner_w - 1:
-                    opt_rows.append([])
-                    row_len = 0
-                opt_rows[-1].append((k, label))
-                row_len += part_len
-
-        # -- Compute box height ------------------------------------------------
+    @staticmethod
+    def _compute_dimensions(
+        scr: Screen,
+        body_lines: list[str],
+        opt_rows: list[list[tuple[str, str]]],
+        item_rows: list[tuple[str, str] | None],
+        max_w: int,
+    ) -> tuple[int, int, int]:
+        """Return (row0, col0, box_height)."""
         h = 3  # top border + title row + separator
         h += len(body_lines) if body_lines else 0
         if body_lines and (opt_rows or item_rows):
@@ -398,25 +457,31 @@ class Popup:
         h += len(item_rows)
         h += len(opt_rows)
         h += 1  # bottom border
-
-        # -- Center on screen --------------------------------------------------
         row0 = max(2, (scr._rows - h) // 2)
         col0 = max(1, (scr._cols - max_w) // 2)
+        return row0, col0, h
 
-        # -- Render ------------------------------------------------------------
+    @staticmethod
+    def _render_popup(
+        scr: Screen,
+        t: Theme,
+        title_text: str,
+        title_color: str,
+        body_lines: list[str],
+        item_rows: list[tuple[str, str] | None],
+        opt_rows: list[list[tuple[str, str]]],
+        inner_w: int,
+        row0: int,
+        col0: int,
+    ) -> int:
+        """Render the popup to screen buffer. Returns the final row index."""
         buf: list[str] = [_sc()]
         row = row0
 
-        # Helpers — each produces exactly max_w visible characters
         def hline(left: str, fill: str, right: str, color: str = t.text_dim) -> str:
             return _cup(row, col0) + t.bg_status + color + left + fill * inner_w + right + _RESET
 
         def content_row(text: str, *, color: str = t.text_primary, ansi_text: str | None = None) -> str:
-            """Render │ text ... │ with correct padding.
-
-            If *ansi_text* is given it is printed instead of *text*, but
-            *text* is used to measure visible width.
-            """
             display = ansi_text if ansi_text is not None else text
             pad = max(0, inner_w - 1 - len(text))
             return _cup(row, col0) + t.bg_status + color + "│ " + display + " " * pad + "│" + _RESET
@@ -424,26 +489,21 @@ class Popup:
         # Top border
         buf.append(hline("┌", "─", "┐", title_color + _BOLD))
         row += 1
-
         # Title
         buf.append(content_row(title_text, color=title_color + _BOLD))
         row += 1
-
         # Separator after title
         buf.append(hline("├", "─", "┤"))
         row += 1
-
         # Body
         for line in body_lines:
             vis = _strip_ansi(line)
             buf.append(content_row(vis, ansi_text=line))
             row += 1
-
         # Separator between body and options/items
         if body_lines and (opt_rows or item_rows):
             buf.append(hline("├", "─", "┤"))
             row += 1
-
         # Vertical menu items
         for entry in item_rows:
             if entry is None:
@@ -457,27 +517,30 @@ class Popup:
             ansi = f"  {k_styled}  {t.text_secondary}{desc}{_RESET}"
             buf.append(content_row(plain, ansi_text=ansi))
             row += 1
-
         # Horizontal option rows
         for orow in opt_rows:
             plain = "".join(f"[{k}] {label}  " for k, label in orow)
             ansi = "".join(f"{t.color_agent}[{k}]{_RESET}{t.text_primary} {label}  " for k, label in orow)
             buf.append(content_row(plain, ansi_text=ansi))
             row += 1
-
         # Bottom border
         buf.append(hline("└", "─", "┘"))
 
         scr._write("".join(buf))
+        return row
 
-        # -- Read keypress -----------------------------------------------------
+    @staticmethod
+    def _read_choice(
+        valid_keys: set[str],
+        options: list[tuple[str, str]] | None,
+        items: list[tuple[str, str] | None] | None,
+    ) -> str:
         choice = ""
         while choice not in valid_keys:
             try:
                 ch = sys.stdin.read(1)
                 choice = ch.lower()
-            except (EOFError, OSError):
-                # fall back to last option
+            except (EOFError, OSError):  # noqa: PERF203
                 if options:
                     choice = options[-1][0]
                 elif items:
@@ -486,14 +549,6 @@ class Popup:
                 else:
                     choice = "q"
                 break
-
-        # -- Erase popup -------------------------------------------------------
-        erase: list[str] = []
-        for r in range(row0, row + 1):
-            erase.append(_cup(r, col0) + " " * max_w)
-        erase.append(_rc())
-        scr._write("".join(erase))
-        scr._full_render()
         return choice
 
     # ── Plain-text fallback (non-TTY / alt-screen not active) ─────────────────
@@ -998,7 +1053,7 @@ class Screen:
 
     # ── Resize ─────────────────────────────────────────────────────────────────
 
-    def _on_resize(self, signum: int, frame: object) -> None:
+    def _on_resize(self, _signum: int, _frame: object) -> None:
         with self._lock:
             self._refresh_size()
             self._full_render()
@@ -1038,7 +1093,7 @@ class SimpleProgressDisplay:
     stream_delay = 0.0
     max_output_lines = 999
 
-    def start_run(self, agents: list[str], workspace: str, max_turns: int) -> None:
+    def start_run(self, agents: list[str], workspace: str, max_turns: int) -> None:  # noqa: ARG002
         w = shutil.get_terminal_size().columns
         self._p(f"\n{'─' * w}")
         turns_display = "unlimited" if max_turns == 0 else str(max_turns)
@@ -1252,7 +1307,7 @@ def _wrap_text(text: str, width: int) -> list[str]:
 
 
 def create_display(
-    reserved_lines: int = 10,
+    reserved_lines: int = 10,  # noqa: ARG001
     force_simple: bool = False,
     theme: str | None = None,
 ) -> Screen | SimpleProgressDisplay:

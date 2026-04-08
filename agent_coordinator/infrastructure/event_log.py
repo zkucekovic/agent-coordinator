@@ -1,4 +1,4 @@
-"""EventLog — appends one structured JSON record per turn to workflow_events.jsonl.
+"""EventLog — appends one structured JSON record per turn to events.jsonl.
 
 Provides a machine-readable audit trail of the full coordination run.
 """
@@ -16,7 +16,7 @@ class EventLog:
     def __init__(self, path: Path) -> None:
         self._path = path
 
-    def append(
+    def append(  # noqa: PLR0913
         self,
         turn: int,
         agent: str,
@@ -25,6 +25,7 @@ class EventLog:
         status_after: str,
         session_id: str,
         response_text: str = "",
+        *,
         prompt_file: str = "",
         prompt_hash: str = "",
         duration_seconds: float = 0.0,
@@ -104,8 +105,8 @@ class EventLog:
         if not self._path.exists():
             return []
         events = []
-        for line in self._path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
+        for raw_line in self._path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
             if line:
                 events.append(json.loads(line))
         return events
