@@ -1,22 +1,13 @@
 # Agent Coordinator
 
-Coordinate multiple AI coding agents on the same codebase. Each agent has a role — architect, developer, QA — and they pass work to each other through a shared text file. The coordinator runs the loop: read who's next, build the prompt, dispatch to the right CLI tool, verify the handoff, repeat.
+Coordinate multiple AI coding agents — architect, developer, QA — on the same codebase. Agents pass work through `handoff.md`; the coordinator reads who's next, builds the prompt, dispatches to the backend, verifies the handoff, and repeats.
 
-Works with [GitHub Copilot CLI](https://github.com/features/copilot), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [OpenCode](https://opencode.ai), or any CLI tool you configure. You can mix backends in the same workflow. Zero third-party dependencies — stdlib Python only.
+Works with [GitHub Copilot CLI](https://github.com/features/copilot), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [OpenCode](https://opencode.ai), or any CLI tool. Mix backends freely. Zero third-party dependencies.
 
-## Why this exists
-
-AI coding agents work one at a time. You open Copilot or Claude, give it a task, wait for it to finish, review the output, then manually start the next step. If you want one agent to plan and another to implement, you copy context between sessions yourself. If you want to use Claude for architecture and Copilot for coding, there's no way to chain them. There's no task tracking, no audit trail, and no way to intervene without starting over.
-
-This tool automates that loop. You define agents in a config file, each backed by whatever CLI tool you want. They communicate through `handoff.md` — a plain text file with structured blocks that any tool can read and write. The coordinator reads who goes next, builds the prompt with the right context, dispatches to the backend, and verifies the agent actually updated the handoff before continuing.
-
-Everything is a file you can read:
-
-- **`handoff.md`** — full conversation history between agents, append-only
-- **`tasks.json`** — current state of every task, updated automatically
-- **`workflow_events.jsonl`** — audit log of every turn with timestamps
-
-You can pause at any time with Ctrl+C, edit the handoff, inject instructions, or take over a turn yourself.
+Shared files:
+- **`handoff.md`** — agent conversation history, append-only
+- **`tasks.json`** — task state, updated automatically
+- **`workflow_events.jsonl`** — audit log with timestamps
 
 ## Install
 
@@ -49,11 +40,9 @@ agent-coordinator --workspace ./my-project
 agent-coordinator --workspace ./my-project
 ```
 
-The default workflow has three agents: an **architect** that plans and reviews, a **developer** that implements, and a **QA engineer** that validates. The architect has final authority — it assigns tasks, routes to QA or back to the developer, and decides when the project is done.
+The default workflow: **architect** plans and reviews, **developer** implements, **QA engineer** validates.
 
 ## How it works
-
-Agents communicate through structured blocks in `handoff.md`:
 
 ```
 ---HANDOFF---
@@ -76,14 +65,7 @@ BLOCKERS:
 ---END---
 ```
 
-The file is append-only. Each turn, the coordinator:
-
-1. Reads the latest block to find `NEXT:` (who goes next) and `STATUS:` (what's happening)
-2. Builds a prompt: role instructions → project rules → spec/plan → shared protocol → handoff history
-3. Dispatches to the backend CLI (copilot, claude, opencode, etc.)
-4. Verifies the agent appended a new block — retries with a reminder if not
-5. Syncs task state in `tasks.json`
-6. Logs the turn to `workflow_events.jsonl`
+Each turn: read `NEXT:` → build prompt → dispatch → verify new block appended (retry if not) → sync `tasks.json` → log to `workflow_events.jsonl`.
 
 ### Status values
 
@@ -131,9 +113,7 @@ planned → in_engineering → ready_for_architect_review → done
 }
 ```
 
-Each agent can use a different backend. `default_backend` applies when an agent doesn't specify one. `max_rework` controls how many rework cycles are allowed before escalating to a human.
-
-Built-in backends: `copilot`, `claude`, `opencode`, `manual` (human-in-the-loop). Any other value is looked up as an executable in PATH, or you can provide a `backend_config` block for full control — see [docs/custom-backends.md](docs/custom-backends.md).
+Each agent can use a different backend. Built-in: `copilot`, `claude`, `opencode`, `manual` (human-in-the-loop). Any other value is resolved from PATH, or use `backend_config` for full control — see [docs/custom-backends.md](docs/custom-backends.md).
 
 ### CLI flags
 
@@ -151,17 +131,15 @@ Built-in backends: `copilot`, `claude`, `opencode`, `manual` (human-in-the-loop)
 
 ### Project files
 
-Drop these in your workspace and they're automatically injected into agent prompts on first turn:
+Drop these in your workspace to inject them into agent prompts on first turn:
 
 - **Specification**: `SPECIFICATION.md`, `spec.md`, `PRD.md`, `requirements.md` (first match wins)
 - **Plan**: `IMPLEMENTATION_PLAN.md`, `plan.md` (first match wins)
-- **Project rules**: `AGENTS.md` — coding standards, conventions, anything agents should follow
-
-All optional. Agents work without them but perform better with explicit context.
+- **Project rules**: `AGENTS.md` — coding standards and conventions
 
 ### Sessions
 
-Agent session IDs are saved in `<workspace>/.coordinator_sessions.json`. Re-running the coordinator resumes where you left off. Use `--reset` to start clean.
+Session IDs are saved in `<workspace>/.coordinator_sessions.json`. Re-running resumes where you left off. Use `--reset` to start clean.
 
 ## Interactive control
 
@@ -180,19 +158,7 @@ The workflow also pauses automatically on `NEXT: human` or when `max_rework` is 
 
 ## Adding agents
 
-No code changes needed. Create a prompt, add to config, update routing.
-
-**1.** Create `prompts/security_reviewer.md`:
-
-```markdown
-# Security Reviewer
-
-You review code changes for vulnerabilities: hardcoded secrets, injection,
-XSS, CSRF, auth/authz issues. Report findings with file, line, and severity.
-Do not modify code. NEXT is always architect.
-```
-
-**2.** Add to `agents.json`:
+No code changes needed. Create a prompt file, add the agent to `agents.json`, and route to it by writing `NEXT: <role>` in a handoff block.
 
 ```json
 "security_reviewer": {
@@ -200,10 +166,6 @@ Do not modify code. NEXT is always architect.
   "prompt_file": "prompts/security_reviewer.md"
 }
 ```
-
-**3.** Update the architect prompt to route to it when appropriate.
-
-Routing is data-driven — any name in `agents.json` is a valid `NEXT:` target.
 
 ## Adding backends
 
@@ -239,7 +201,7 @@ Register in `agent_coordinator/cli.py` and reference as `"backend": "my_runner"`
 
 ## Retry behavior
 
-When an agent doesn't update `handoff.md` (LLMs sometimes output the block in chat but forget to write the file), the coordinator retries with a targeted reminder. If a task exceeds `max_rework` cycles, it escalates based on the `on_exceed` policy.
+If an agent doesn't update `handoff.md`, the coordinator retries with a reminder. If `max_rework` is exceeded, it escalates per the `on_exceed` policy.
 
 ## Demo
 
@@ -247,7 +209,7 @@ When an agent doesn't update `handoff.md` (LLMs sometimes output the block in ch
 agent-coordinator --workspace examples/tetris-demo --max-turns 30
 ```
 
-Builds a playable HTML Tetris game through the full architect → developer → QA loop. Opens in any browser when done. See [examples/tetris-demo/](examples/tetris-demo/).
+Builds a playable HTML Tetris game through the full architect → developer → QA loop. See [examples/tetris-demo/](examples/tetris-demo/).
 
 ## Tests
 
