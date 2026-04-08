@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from agent_coordinator.application.runner import AgentRunner
 from agent_coordinator.domain.models import RunResult
@@ -37,7 +37,13 @@ class OpenCodeRunner(AgentRunner):
 
         return self._parse_lines(raw_lines, session_id, on_output)
 
-    def _build_cmd(self, message, workspace, session_id, model):
+    def _build_cmd(
+        self,
+        message: str,
+        workspace: Path,
+        session_id: str | None,
+        model: str | None,
+    ) -> list[str]:
         cmd = ["opencode", "run", message, "--format", "json", "--dir", str(workspace)]
         if session_id:
             cmd += ["--continue", "--session", session_id]
@@ -45,7 +51,12 @@ class OpenCodeRunner(AgentRunner):
             cmd += ["--model", model]
         return cmd
 
-    def _parse_lines(self, raw_lines, fallback_session_id, on_output):
+    def _parse_lines(
+        self,
+        raw_lines: list[str],
+        fallback_session_id: str | None,
+        on_output: Callable[[str], None] | None,
+    ) -> RunResult:
         text_parts: list[str] = []
         session_id = fallback_session_id
         returncode = 0  # opencode embeds errors in JSON

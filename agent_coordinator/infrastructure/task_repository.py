@@ -68,9 +68,7 @@ class JsonTaskRepository(TaskRepository):
             "version": _CURRENT_VERSION,
             "tasks": [self._serialise(t) for t in self._tasks.values()],
         }
-        self._path.write_text(
-            json.dumps(payload, indent=2), encoding="utf-8"
-        )
+        self._path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     @staticmethod
     def _serialise(task: Task) -> dict:

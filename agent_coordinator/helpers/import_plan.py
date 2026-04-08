@@ -15,15 +15,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-
 # ── Document type detection ────────────────────────────────────────────────────
 
 _SPEC_KEYWORDS = re.compile(
-    r'\b(requirement|specification|constraint|acceptance.criteria|overview|prd|use.case)\b',
+    r"\b(requirement|specification|constraint|acceptance.criteria|overview|prd|use.case)\b",
     re.IGNORECASE,
 )
 _PLAN_KEYWORDS = re.compile(
-    r'\b(phase|task-\d+|implementation.plan|milestone|step \d+|sprint)\b',
+    r"\b(phase|task-\d+|implementation.plan|milestone|step \d+|sprint)\b",
     re.IGNORECASE,
 )
 
@@ -45,6 +44,7 @@ def detect_doc_type(content: str) -> str:
 
 
 # ── Markdown extraction helpers ────────────────────────────────────────────────
+
 
 def extract_title(content: str) -> str:
     """Return the first H1 heading, or 'Imported Document'."""
@@ -75,22 +75,22 @@ def extract_tasks_from_plan(content: str) -> list[dict[str, Any]]:
 
     # Pattern 1: any heading containing (task-NNN) or task-NNN
     explicit_id_re = re.compile(
-        r'^#{1,4}\s+.*?(?:\(?(task-\d+)\)?)',
+        r"^#{1,4}\s+.*?(?:\(?(task-\d+)\)?)",
         re.IGNORECASE,
     )
     # Pattern 2: heading that is itself a task-NNN title
     task_heading_re = re.compile(
-        r'^#{1,4}\s+(task-\d+)[:\s—\-]+(.+)',
+        r"^#{1,4}\s+(task-\d+)[:\s—\-]+(.+)",
         re.IGNORECASE,
     )
     # Pattern 3: numbered phase / step heading (fallback)
     numbered_heading_re = re.compile(
-        r'^#{1,4}\s+(?:phase|step|sprint|milestone|part)\s*(\d+)[:\s—\-]+(.+)',
+        r"^#{1,4}\s+(?:phase|step|sprint|milestone|part)\s*(\d+)[:\s—\-]+(.+)",
         re.IGNORECASE,
     )
     # Pattern 4: simple numbered heading  "### 1. Title" or "### 1 — Title"
     simple_numbered_re = re.compile(
-        r'^#{1,4}\s+(\d+)[.\s—\-]+(.+)',
+        r"^#{1,4}\s+(\d+)[.\s—\-]+(.+)",
     )
 
     seen_ids: set[str] = set()
@@ -112,9 +112,9 @@ def extract_tasks_from_plan(content: str) -> list[dict[str, Any]]:
             if m2:
                 task_id = m2.group(1).lower()
                 # Title is the heading text minus the parenthesised id
-                heading_text = re.sub(r'\(?task-\d+\)?', '', line, flags=re.IGNORECASE)
-                heading_text = re.sub(r'^#+\s*', '', heading_text).strip()
-                heading_text = heading_text.strip(' —-:')
+                heading_text = re.sub(r"\(?task-\d+\)?", "", line, flags=re.IGNORECASE)
+                heading_text = re.sub(r"^#+\s*", "", heading_text).strip()
+                heading_text = heading_text.strip(" —-:")
                 title = heading_text or task_id
             else:
                 m3 = numbered_heading_re.match(line)
@@ -135,33 +135,35 @@ def extract_tasks_from_plan(content: str) -> list[dict[str, Any]]:
             seen_ids.add(task_id)
 
             # Collect the body lines until the next same-or-higher heading
-            heading_depth = len(line) - len(line.lstrip('#'))
+            heading_depth = len(line) - len(line.lstrip("#"))
             body_lines: list[str] = []
             j = i + 1
             while j < len(lines):
                 next_line = lines[j]
-                if re.match(r'^#{1,' + str(heading_depth) + r'}\s', next_line):
+                if re.match(r"^#{1," + str(heading_depth) + r"}\s", next_line):
                     break
                 body_lines.append(next_line)
                 j += 1
 
-            body = '\n'.join(body_lines).strip()
-            acceptance = _extract_bullets(body, section_hint='acceptance')
-            constraints = _extract_bullets(body, section_hint='constraint')
+            body = "\n".join(body_lines).strip()
+            acceptance = _extract_bullets(body, section_hint="acceptance")
+            constraints = _extract_bullets(body, section_hint="constraint")
             description = _first_paragraph(body)
 
-            tasks.append({
-                "id": task_id,
-                "title": _clean_title(title),
-                "description": description,
-                "status": "planned",
-                "acceptance_criteria": acceptance,
-                "constraints": constraints,
-                "depends_on": [],
-                "rework_count": 0,
-                "created_at": ts,
-                "updated_at": ts,
-            })
+            tasks.append(
+                {
+                    "id": task_id,
+                    "title": _clean_title(title),
+                    "description": description,
+                    "status": "planned",
+                    "acceptance_criteria": acceptance,
+                    "constraints": constraints,
+                    "depends_on": [],
+                    "rework_count": 0,
+                    "created_at": ts,
+                    "updated_at": ts,
+                }
+            )
 
         i += 1
 
@@ -170,23 +172,23 @@ def extract_tasks_from_plan(content: str) -> list[dict[str, Any]]:
 
 def _first_paragraph(text: str) -> str:
     """Return the first non-empty paragraph from a block of text."""
-    paragraphs = re.split(r'\n\s*\n', text.strip())
+    paragraphs = re.split(r"\n\s*\n", text.strip())
     for p in paragraphs:
         clean = p.strip()
         # Skip lines that look like sub-headings or bullet sections
-        if clean and not clean.startswith('#') and not re.match(r'^[-*•]\s', clean[:3]):
+        if clean and not clean.startswith("#") and not re.match(r"^[-*•]\s", clean[:3]):
             return clean
     return ""
 
 
-def _extract_bullets(text: str, section_hint: str = '') -> list[str]:
+def _extract_bullets(text: str, section_hint: str = "") -> list[str]:
     """
     Extract bullet list items from text, optionally scoped to a named section.
     """
     if section_hint:
         # Look for a subsection heading matching the hint
         pattern = re.compile(
-            r'(?:^|\n)#{1,6}\s+[^\n]*' + re.escape(section_hint) + r'[^\n]*\n(.*?)(?=\n#{1,6}\s|\Z)',
+            r"(?:^|\n)#{1,6}\s+[^\n]*" + re.escape(section_hint) + r"[^\n]*\n(.*?)(?=\n#{1,6}\s|\Z)",
             re.IGNORECASE | re.DOTALL,
         )
         m = pattern.search(text)
@@ -197,19 +199,20 @@ def _extract_bullets(text: str, section_hint: str = '') -> list[str]:
     items = []
     for line in scope.splitlines():
         line = line.strip()
-        if re.match(r'^[-*•]\s+', line):
-            items.append(re.sub(r'^[-*•]\s+', '', line).strip())
-        elif re.match(r'^\d+\.\s+', line):
-            items.append(re.sub(r'^\d+\.\s+', '', line).strip())
+        if re.match(r"^[-*•]\s+", line):
+            items.append(re.sub(r"^[-*•]\s+", "", line).strip())
+        elif re.match(r"^\d+\.\s+", line):
+            items.append(re.sub(r"^\d+\.\s+", "", line).strip())
     return [item for item in items if item]
 
 
 def _clean_title(title: str) -> str:
     """Strip trailing punctuation and common noise from a title string."""
-    return re.sub(r'[`*_]', '', title).strip(' :-—')
+    return re.sub(r"[`*_]", "", title).strip(" :-—")
 
 
 # ── tasks.json builder ─────────────────────────────────────────────────────────
+
 
 def build_tasks_json(tasks: list[dict[str, Any]]) -> dict:
     return {"version": 1, "tasks": tasks}
@@ -217,10 +220,11 @@ def build_tasks_json(tasks: list[dict[str, Any]]) -> dict:
 
 # ── handoff.md builders ────────────────────────────────────────────────────────
 
+
 def build_handoff_from_spec(title: str) -> str:
     """Create the initial handoff block for an imported specification."""
     return f"""\
-## {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')} — Import
+## {datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")} — Import
 
 Specification imported: `SPECIFICATION.md`
 
@@ -260,13 +264,14 @@ def build_handoff_from_plan(title: str, tasks: list[dict[str, Any]]) -> str:
     first_task_title = first_task["title"] if first_task else "first task"
     task_summary = (
         f"{task_count} tasks imported ({', '.join(t['id'] for t in tasks[:5])}"
-        + (f", …" if task_count > 5 else "")
+        + (", …" if task_count > 5 else "")
         + ")"
-        if tasks else "no tasks detected — decompose manually"
+        if tasks
+        else "no tasks detected — decompose manually"
     )
 
     return f"""\
-## {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')} — Import
+## {datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")} — Import
 
 Implementation plan imported: `plan.md`
 Tasks loaded into `tasks.json`: {task_summary}
@@ -299,6 +304,7 @@ BLOCKERS:
 
 
 # ── Import orchestration ───────────────────────────────────────────────────────
+
 
 def import_document(
     source_path: Path,
@@ -336,7 +342,8 @@ def import_document(
         doc_type = detect_doc_type(content)
         if doc_type == "unknown":
             if interactive and sys.stdin.isatty():
-                from agent_coordinator.infrastructure.enhanced_input import enhanced_choice, Colors
+                from agent_coordinator.infrastructure.enhanced_input import Colors, enhanced_choice
+
                 print()
                 choice = enhanced_choice(
                     Colors.prompt("Could not auto-detect document type. Is this a (s)pec or (p)lan? [s/p]: "),
@@ -448,6 +455,7 @@ def _write_file(path: Path, content: str, force: bool, verbose: bool, interactiv
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
+
 
 def main_import() -> None:
     parser = argparse.ArgumentParser(

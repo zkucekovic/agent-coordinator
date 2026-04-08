@@ -10,13 +10,14 @@ from dataclasses import dataclass
 
 from agent_coordinator.domain.models import HandoffMessage, HandoffStatus
 
-
 # Statuses that mean the coordinator should stop the loop.
-_TERMINAL_STATUSES: frozenset[HandoffStatus] = frozenset({
-    HandoffStatus.PLAN_COMPLETE,
-    HandoffStatus.BLOCKED,
-    HandoffStatus.DONE,
-})
+_TERMINAL_STATUSES: frozenset[HandoffStatus] = frozenset(
+    {
+        HandoffStatus.PLAN_COMPLETE,
+        HandoffStatus.BLOCKED,
+        HandoffStatus.DONE,
+    }
+)
 
 # NEXT values that mean no agent should be invoked.
 _STOP_NEXT_VALUES: frozenset[str] = frozenset({"none", "done", "human"})
@@ -25,9 +26,10 @@ _STOP_NEXT_VALUES: frozenset[str] = frozenset({"none", "done", "human"})
 @dataclass(frozen=True)
 class RoutingDecision:
     """Result of a routing evaluation."""
-    next_actor: str         # agent role name, "human", or "none"
-    is_terminal: bool       # True → coordinator should stop
-    stop_reason: str | None # human-readable explanation when is_terminal is True
+
+    next_actor: str  # agent role name, "human", or "none"
+    is_terminal: bool  # True → coordinator should stop
+    stop_reason: str | None  # human-readable explanation when is_terminal is True
 
 
 class WorkflowRouter:
@@ -77,8 +79,8 @@ class WorkflowRouter:
     def _terminal_reason(status: HandoffStatus) -> str:
         reasons = {
             HandoffStatus.PLAN_COMPLETE: "Plan complete ✅",
-            HandoffStatus.DONE:          "Workflow complete ✅",
-            HandoffStatus.NEEDS_HUMAN:   "Human input required ⚠",
-            HandoffStatus.BLOCKED:       "Workflow blocked 🛑",
+            HandoffStatus.DONE: "Workflow complete ✅",
+            HandoffStatus.NEEDS_HUMAN: "Human input required ⚠",
+            HandoffStatus.BLOCKED: "Workflow blocked 🛑",
         }
         return reasons.get(status, f"Terminal status: {status.value}")

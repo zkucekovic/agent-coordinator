@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from agent_coordinator.domain.models import TaskStatus
 
-
 # Standard transition map: {from_status: {allowed_to_statuses}}
 STANDARD_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
     TaskStatus.PLANNED: {
@@ -67,7 +66,4 @@ def validate_transition(
 ) -> None:
     """Raise ValueError if the transition is not permitted."""
     if not is_valid_transition(from_status, to_status, transitions):
-        raise ValueError(
-            f"Invalid transition for task {task_id!r}: "
-            f"{from_status.value} → {to_status.value}"
-        )
+        raise ValueError(f"Invalid transition for task {task_id!r}: {from_status.value} → {to_status.value}")

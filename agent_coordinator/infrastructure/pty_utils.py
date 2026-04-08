@@ -7,7 +7,7 @@ running in a real terminal so they can:
   - receive user responses to those dialogs
 
 When stdout is a pipe (the default with subprocess.PIPE), the child
-detects "not a TTY" and silently falls back to "Permission denied –
+detects "not a TTY" and silently falls back to "Permission denied -
 could not request permission from user".
 
 run_with_pty() solves this by:
@@ -26,24 +26,26 @@ the `pty` module (e.g. Windows).
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import select
 import sys
 import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 # ── ANSI stripping ────────────────────────────────────────────────────────────
 
 _ANSI_RE = re.compile(
     r"\033(?:"
-    r"\[[0-?]*[ -/]*[@-~]"            # CSI sequences (colours, cursor)
-    r"|\][^\x07]*(?:\x07|\033\\)"      # OSC sequences (must precede two-char)
-    r"|\([A-Z]"                        # character set designation
-    r"|[@-Z\\-_]"                      # two-char ESC sequences
+    r"\[[0-?]*[ -/]*[@-~]"  # CSI sequences (colours, cursor)
+    r"|\][^\x07]*(?:\x07|\033\\)"  # OSC sequences (must precede two-char)
+    r"|\([A-Z]"  # character set designation
+    r"|[@-Z\\-_]"  # two-char ESC sequences
     r")"
 )
+
 
 def _strip(text: str) -> str:
     return _ANSI_RE.sub("", text)
@@ -52,9 +54,10 @@ def _strip(text: str) -> str:
 # ── Platform guard ────────────────────────────────────────────────────────────
 
 try:
-    import pty as _pty
     import fcntl
+    import pty as _pty
     import termios
+
     _HAS_PTY = True
 except ImportError:
     _HAS_PTY = False
@@ -62,13 +65,14 @@ except ImportError:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+
 class PtyResult:
-    __slots__ = ("returncode", "stdout", "stderr")
+    __slots__ = ("returncode", "stderr", "stdout")
 
     def __init__(self, returncode: int, stdout: str, stderr: str) -> None:
         self.returncode = returncode
-        self.stdout     = stdout
-        self.stderr     = stderr
+        self.stdout = stdout
+        self.stderr = stderr
 
 
 def run_with_pty(
@@ -121,10 +125,8 @@ def _run_pty(
 
     def _close_fd(fd: int) -> None:
         if fd in open_fds:
-            try:
+            with contextlib.suppress(OSError):
                 os.close(fd)
-            except OSError:
-                pass
             open_fds.discard(fd)
 
     try:
@@ -153,8 +155,8 @@ def _run_pty(
     # We forward raw bytes from our real stdin → PTY master; the slave's
     # ICANON assembles them into lines for the subprocess.
 
-    chunks: list[str]   = []
-    chunks_bytes: int   = 0
+    chunks: list[str] = []
+    chunks_bytes: int = 0
     done = threading.Event()
 
     # ── Output reader ─────────────────────────────────────────────────────────
@@ -164,7 +166,7 @@ def _run_pty(
         while not done.is_set():
             try:
                 r, _, _ = select.select([master_fd], [], [], 0.05)
-            except (select.error, ValueError, OSError):
+            except (ValueError, OSError):
                 break
             if not r:
                 continue
@@ -210,7 +212,7 @@ def _run_pty(
         while not done.is_set():
             try:
                 r, _, _ = select.select([sys.stdin], [], [], 0.1)
-            except (select.error, ValueError, OSError):
+            except (ValueError, OSError):
                 break
             if not r:
                 continue
@@ -228,8 +230,8 @@ def _run_pty(
                 except OSError:
                     break
 
-    out_thread = threading.Thread(target=_read_output,   daemon=True, name="pty-out")
-    in_thread  = threading.Thread(target=_forward_stdin, daemon=True, name="pty-in")
+    out_thread = threading.Thread(target=_read_output, daemon=True, name="pty-out")
+    in_thread = threading.Thread(target=_forward_stdin, daemon=True, name="pty-in")
     out_thread.start()
     in_thread.start()
 
@@ -270,6 +272,7 @@ def _run_pty(
 
 
 # ── Pipe fallback (Windows / non-TTY) ────────────────────────────────────────
+
 
 def _run_pipe(
     cmd: list[str],

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from agent_coordinator.application.runner import AgentRunner
 from agent_coordinator.domain.models import RunResult
@@ -28,9 +28,7 @@ class CopilotRunner(AgentRunner):
         result = run_with_pty(cmd, cwd=workspace, on_output=on_output)
 
         if result.returncode != 0 and not result.stdout:
-            raise RuntimeError(
-                f"copilot exited {result.returncode}: {result.stderr}"
-            )
+            raise RuntimeError(f"copilot exited {result.returncode}: {result.stderr}")
 
         session = self._extract_session_id(result.stderr, session_id, result.stdout)
         return RunResult(session_id=session, text=result.stdout)
@@ -45,6 +43,7 @@ class CopilotRunner(AgentRunner):
 
     def _extract_session_id(self, stderr: str, fallback: str | None, stdout: str) -> str:
         import re
+
         _UUID_RE = re.compile(
             r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
             re.IGNORECASE,

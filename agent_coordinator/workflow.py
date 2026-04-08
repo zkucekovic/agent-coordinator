@@ -3,8 +3,8 @@
 New code should use WorkflowRouter directly.
 """
 
-from agent_coordinator.domain.models import HandoffMessage, HandoffStatus
 from agent_coordinator.application.router import WorkflowRouter
+from agent_coordinator.domain.models import HandoffMessage, HandoffStatus
 from agent_coordinator.handoff_parser import extract_latest
 
 _router = WorkflowRouter()
@@ -28,7 +28,7 @@ def is_blocked(message: HandoffMessage) -> bool:
 
 
 def get_workflow_state(handoff_file_path: str) -> dict:
-    with open(handoff_file_path, "r", encoding="utf-8") as f:
+    with open(handoff_file_path, encoding="utf-8") as f:
         content = f.read()
 
     message, errors = extract_latest(content)
@@ -44,7 +44,7 @@ def get_workflow_state(handoff_file_path: str) -> dict:
             "errors": errors,
         }
 
-    decision = _router.route(message)
+    _router.route(message)
     return {
         "valid": True,
         "next_actor": message.next,
@@ -55,4 +55,3 @@ def get_workflow_state(handoff_file_path: str) -> dict:
         "needs_human": is_human_escalation(message),
         "errors": [],
     }
-

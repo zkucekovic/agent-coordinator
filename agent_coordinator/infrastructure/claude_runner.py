@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from agent_coordinator.application.runner import AgentRunner
 from agent_coordinator.domain.models import RunResult
-from agent_coordinator.infrastructure.pty_utils import run_with_pty
+from agent_coordinator.infrastructure.pty_utils import PtyResult, run_with_pty
 
 
 class ClaudeCodeRunner(AgentRunner):
@@ -29,10 +29,20 @@ class ClaudeCodeRunner(AgentRunner):
         result = run_with_pty(cmd, cwd=workspace, on_output=on_output)
         return self._parse_output(result, session_id)
 
-    def _build_cmd(self, message, workspace, session_id, model):
+    def _build_cmd(
+        self,
+        message: str,
+        workspace: Path,
+        session_id: str | None,
+        model: str | None,
+    ) -> list[str]:
         cmd = [
-            "claude", "--print", "--output-format", "json",
-            "--permission-mode", "bypassPermissions",
+            "claude",
+            "--print",
+            "--output-format",
+            "json",
+            "--permission-mode",
+            "bypassPermissions",
         ]
         if session_id:
             cmd += ["--continue", "--session-id", session_id]
@@ -41,7 +51,7 @@ class ClaudeCodeRunner(AgentRunner):
         cmd += ["--cwd", str(workspace), message]
         return cmd
 
-    def _parse_output(self, result, fallback_session_id):
+    def _parse_output(self, result: PtyResult, fallback_session_id: str | None) -> RunResult:
         text = ""
         session_id = fallback_session_id
         try:
@@ -51,7 +61,5 @@ class ClaudeCodeRunner(AgentRunner):
         except (json.JSONDecodeError, TypeError):
             text = result.stdout
         if result.returncode != 0 and not text:
-            raise RuntimeError(
-                f"claude exited {result.returncode}: {result.stderr}"
-            )
+            raise RuntimeError(f"claude exited {result.returncode}: {result.stderr}")
         return RunResult(session_id=session_id or "", text=text)

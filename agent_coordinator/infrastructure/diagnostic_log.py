@@ -15,8 +15,6 @@ import sys
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
-
 
 _LOG_FILENAME = ".coordinator-debug.log"
 
@@ -31,9 +29,7 @@ class _OneLineFormatter(logging.Formatter):
     """Formats records as:  2024-01-02T15:04:05Z | LEVEL    | message  {ctx}"""
 
     def format(self, record: logging.LogRecord) -> str:
-        ts = datetime.fromtimestamp(record.created, tz=timezone.utc).strftime(
-            "%Y-%m-%dT%H:%M:%S.%f"
-        )[:-3] + "Z"
+        ts = datetime.fromtimestamp(record.created, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
         level = record.levelname.ljust(8)
         msg = record.getMessage()
 

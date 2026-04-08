@@ -7,8 +7,9 @@ The command template and argument format are configured per-agent in agents.json
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from agent_coordinator.application.runner import AgentRunner
 from agent_coordinator.domain.models import RunResult
@@ -18,7 +19,7 @@ from agent_coordinator.infrastructure.pty_utils import run_with_pty
 class GenericRunner(AgentRunner):
     """
     Runs any CLI backend using a configurable command template.
-    
+
     Configuration in agents.json:
     {
         "agents": {
@@ -37,7 +38,7 @@ class GenericRunner(AgentRunner):
             }
         }
     }
-    
+
     Output format options:
     - "json": Expects JSON output with configurable field names
     - "text": Treats stdout as plain text
@@ -66,7 +67,7 @@ class GenericRunner(AgentRunner):
     ) -> RunResult:
         """
         Invoke the configured CLI tool and return the result.
-        
+
         Raises RuntimeError if the command exits non-zero with no output.
         """
         cmd = self._build_cmd(message, workspace, session_id, model)
@@ -88,26 +89,26 @@ class GenericRunner(AgentRunner):
     ) -> list[str]:
         """Build the command list with all configured arguments."""
         cmd = list(self._config["command"])
-        
+
         # Add message argument
         message_arg = self._config.get("message_arg", "{message}")
         cmd.append(message_arg.format(message=message))
-        
+
         # Add workspace argument if configured
         if "workspace_arg" in self._config:
             workspace_arg = self._config["workspace_arg"]
             cmd.extend(self._format_arg_list(workspace_arg, workspace=str(workspace)))
-        
+
         # Add session argument if provided and configured
         if session_id and "session_arg" in self._config:
             session_arg = self._config["session_arg"]
             cmd.extend(self._format_arg_list(session_arg, session_id=session_id))
-        
+
         # Add model argument if provided and configured
         if model and "model_arg" in self._config:
             model_arg = self._config["model_arg"]
             cmd.extend(self._format_arg_list(model_arg, model=model))
-        
+
         return cmd
 
     def _format_arg_list(self, arg_template: list[str] | str, **kwargs: str) -> list[str]:
@@ -123,7 +124,7 @@ class GenericRunner(AgentRunner):
     ) -> RunResult:
         """Parse output based on configured format."""
         output_format = self._config.get("output_format", "text")
-        
+
         if output_format == "jsonl":
             return self._parse_jsonl(result, fallback_session_id)
         elif output_format == "json":
@@ -145,11 +146,11 @@ class GenericRunner(AgentRunner):
         for line in result.stdout.splitlines():
             try:
                 event = json.loads(line)
-                
+
                 # Extract session ID if present
                 if session_id is None and session_field in event:
                     session_id = event[session_field]
-                
+
                 # Check for text in various possible structures
                 if text_field in event:
                     chunk = event[text_field]
@@ -168,9 +169,7 @@ class GenericRunner(AgentRunner):
             print()
 
         if result.returncode != 0 and not text_parts:
-            raise RuntimeError(
-                f"Command exited {result.returncode}: {result.stderr.strip()}"
-            )
+            raise RuntimeError(f"Command exited {result.returncode}: {result.stderr.strip()}")
 
         return RunResult(session_id=session_id or "", text="".join(text_parts))
 
@@ -197,9 +196,7 @@ class GenericRunner(AgentRunner):
                 print(text)
 
         if result.returncode != 0 and not text:
-            raise RuntimeError(
-                f"Command exited {result.returncode}: {result.stderr.strip()}"
-            )
+            raise RuntimeError(f"Command exited {result.returncode}: {result.stderr.strip()}")
 
         return RunResult(session_id=session_id or "", text=text)
 
@@ -210,13 +207,11 @@ class GenericRunner(AgentRunner):
     ) -> RunResult:
         """Parse plain text output."""
         text = result.stdout
-        
+
         if self._verbose and text:
             print(text)
 
         if result.returncode != 0 and not text:
-            raise RuntimeError(
-                f"Command exited {result.returncode}: {result.stderr.strip()}"
-            )
+            raise RuntimeError(f"Command exited {result.returncode}: {result.stderr.strip()}")
 
         return RunResult(session_id=fallback_session_id or "", text=text)

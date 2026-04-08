@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import sys
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from agent_coordinator.application.runner import AgentRunner
 from agent_coordinator.domain.models import RunResult

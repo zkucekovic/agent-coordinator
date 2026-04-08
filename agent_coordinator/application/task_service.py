@@ -21,7 +21,7 @@ class TaskService:
 
     def __init__(
         self,
-        repository: "TaskRepository",
+        repository: TaskRepository,
         transitions: dict[TaskStatus, set[TaskStatus]] | None = None,
         retry_policy: RetryPolicy | None = None,
     ) -> None:
@@ -79,7 +79,7 @@ class TaskService:
         - concurrency guard: another task is already IN_ENGINEERING
         """
         from datetime import datetime, timezone
-        
+
         task = self._require(task_id)
         validate_transition(task_id, task.status, new_status, self._transitions)
         self._check_concurrency(task_id, new_status)
@@ -108,9 +108,7 @@ class TaskService:
             self._repo.save(task)
             return escalation_status
 
-        validate_transition(
-            task_id, task.status, TaskStatus.REWORK_REQUESTED, self._transitions
-        )
+        validate_transition(task_id, task.status, TaskStatus.REWORK_REQUESTED, self._transitions)
         task.status = TaskStatus.REWORK_REQUESTED
         self._repo.save(task)
         return TaskStatus.REWORK_REQUESTED
@@ -134,9 +132,7 @@ class TaskService:
             return
         active = self.active_engineering_task()
         if active is not None and active.id != task_id:
-            raise ValueError(
-                f"Cannot start {task_id!r}: task {active.id!r} is already in_engineering"
-            )
+            raise ValueError(f"Cannot start {task_id!r}: task {active.id!r} is already in_engineering")
 
 
 class TaskRepository:

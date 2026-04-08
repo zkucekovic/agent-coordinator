@@ -1,9 +1,10 @@
 """Entry point for helper commands."""
+
 import sys
 
 COMMANDS = {
-    "task":   "Create a new task interactively",
-    "spec":   "Create a new specification interactively",
+    "task": "Create a new task interactively",
+    "spec": "Create a new specification interactively",
     "import": "Import an existing specification or implementation plan",
 }
 
@@ -20,18 +21,21 @@ if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
 command = sys.argv[1]
 
 if command == "task":
-    sys.argv = ["create_task"] + sys.argv[2:]
+    sys.argv = ["create_task", *sys.argv[2:]]
     from agent_coordinator.helpers.create_task import main_task
+
     main_task()
 
 elif command == "spec":
-    sys.argv = ["create_spec"] + sys.argv[2:]
+    sys.argv = ["create_spec", *sys.argv[2:]]
     from agent_coordinator.helpers.create_task import main_spec
+
     main_spec()
 
 elif command == "import":
-    sys.argv = ["import"] + sys.argv[2:]
+    sys.argv = ["import", *sys.argv[2:]]
     from agent_coordinator.helpers.import_plan import main_import
+
     main_import()
 
 else:

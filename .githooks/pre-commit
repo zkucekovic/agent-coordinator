@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Run only on staged Python files for speed
+STAGED=$(git diff --cached --name-only --diff-filter=ACM -- '*.py')
+if [ -z "$STAGED" ]; then
+    echo "✅ No Python files staged — skipping lint checks"
+    exit 0
+fi
+
+echo "🔍 Ruff: linting staged Python files..."
+uvx ruff check $STAGED
+echo "✅ Ruff passed"
+
+echo ""
+echo "🔍 Ruff: checking format..."
+uvx ruff format --check $STAGED
+echo "✅ Format OK"
+
+echo ""
+echo "🔬 mypy: static analysis..."
+uvx mypy $STAGED --ignore-missing-imports
+echo "✅ mypy passed"
+
+echo ""
+echo "✅ All pre-commit checks passed"

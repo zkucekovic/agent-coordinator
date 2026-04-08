@@ -6,11 +6,16 @@ Renders entirely inside the alt-screen TUI (header + pinned status bar).
 
 from __future__ import annotations
 
-import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from agent_coordinator.infrastructure.tui import Screen
 
 try:
     import readline as _rl
+
     _RL = True
 except ImportError:
     _RL = False
@@ -18,13 +23,13 @@ except ImportError:
 
 # ── Command registry ──────────────────────────────────────────────────────────
 
+
 class Command:
-    def __init__(self, name: str, description: str, usage: str = "",
-                 aliases: list[str] | None = None) -> None:
-        self.name        = name
+    def __init__(self, name: str, description: str, usage: str = "", aliases: list[str] | None = None) -> None:
+        self.name = name
         self.description = description
-        self.usage       = usage or f"/{name}"
-        self.aliases     = aliases or []
+        self.usage = usage or f"/{name}"
+        self.aliases = aliases or []
 
     def matches(self, token: str) -> bool:
         t = token.lstrip("/").lower()
@@ -32,26 +37,19 @@ class Command:
 
 
 COMMANDS: list[Command] = [
-    Command("init",        "Initialize a new workspace",
-            "/init [path]",          aliases=["i"]),
-    Command("import-spec", "Import a specification file",
-            "/import-spec [file]",   aliases=["is", "spec"]),
-    Command("import-plan", "Import an implementation plan",
-            "/import-plan [file]",   aliases=["ip", "plan"]),
-    Command("run",         "Run the coordinator on a workspace",
-            "/run [path]",           aliases=["r", "start"]),
-    Command("status",      "Show workspace status",
-            "/status [path]",        aliases=["s"]),
-    Command("reset",       "Clear saved session state",
-            "/reset [path]",         aliases=[]),
-    Command("help",        "Show this command list",
-            "/help",                 aliases=["h", "?"]),
-    Command("quit",        "Exit",
-            "/quit",                 aliases=["q", "exit"]),
+    Command("init", "Initialize a new workspace", "/init [path]", aliases=["i"]),
+    Command("import-spec", "Import a specification file", "/import-spec [file]", aliases=["is", "spec"]),
+    Command("import-plan", "Import an implementation plan", "/import-plan [file]", aliases=["ip", "plan"]),
+    Command("run", "Run the coordinator on a workspace", "/run [path]", aliases=["r", "start"]),
+    Command("status", "Show workspace status", "/status [path]", aliases=["s"]),
+    Command("reset", "Clear saved session state", "/reset [path]", aliases=[]),
+    Command("help", "Show this command list", "/help", aliases=["h", "?"]),
+    Command("quit", "Exit", "/quit", aliases=["q", "exit"]),
 ]
 
 
 # ── StartupCLI ────────────────────────────────────────────────────────────────
+
 
 class StartupCLI:
     """
@@ -59,13 +57,17 @@ class StartupCLI:
     Returns an action dict to main() describing what to do next.
     """
 
-    def __init__(self, screen=None) -> None:
-        from agent_coordinator.infrastructure.tui import Screen, create_display
-        self._screen = screen or create_display()
+    def __init__(self, screen: Screen | None = None) -> None:
+        from agent_coordinator.infrastructure.tui import create_display
+
+        display = screen or create_display()
+        if not isinstance(display, Screen):
+            raise RuntimeError("StartupCLI requires a TTY-capable Screen display")
+        self._screen: Screen = display
         if _RL:
             _setup_readline([c.name for c in COMMANDS])
 
-    def run(self) -> dict:
+    def run(self) -> dict[str, Any]:
         """Enter TUI, show startup menu, enter command loop. Returns an action dict."""
         self._screen.start_menu()
         try:
@@ -81,7 +83,7 @@ class StartupCLI:
 
                 action = self._dispatch(raw.strip())
                 if action is not None:
-                    action["screen"] = self._screen   # pass screen so caller can reuse it
+                    action["screen"] = self._screen  # pass screen so caller can reuse it
                     return action
         except Exception:
             self._screen.close()
@@ -96,43 +98,36 @@ class StartupCLI:
         # Title
         self._screen._append_content("")
         self._screen._append_content(
-            f"  {t.color_agent}\033[1magent-coordinator\033[0m"
-            f"  {t.text_dim}multi-agent workflow orchestrator\033[0m"
+            f"  {t.color_agent}\033[1magent-coordinator\033[0m  {t.text_dim}multi-agent workflow orchestrator\033[0m"
         )
-        self._screen._append_content(
-            f"  {t.text_dim}{'─' * (self._screen._cols - 4)}\033[0m"
-        )
+        self._screen._append_content(f"  {t.text_dim}{'─' * (self._screen._cols - 4)}\033[0m")
         self._screen._append_content("")
 
         for cmd in COMMANDS:
             if cmd.name == "quit":
                 self._screen._append_content("")
-            padding  = " " * (col_w - len(cmd.usage))
-            line = (
-                f"  {t.color_success}\033[1m{cmd.usage}\033[0m{padding}"
-                f"  {t.text_secondary}{cmd.description}\033[0m"
-            )
+            padding = " " * (col_w - len(cmd.usage))
+            line = f"  {t.color_success}\033[1m{cmd.usage}\033[0m{padding}  {t.text_secondary}{cmd.description}\033[0m"
             self._screen._append_content(line)
 
         self._screen._append_content("")
-        self._screen._append_content(
-            f"  {t.text_dim}type a command and press Enter  •  Tab to complete\033[0m"
-        )
+        self._screen._append_content(f"  {t.text_dim}type a command and press Enter  •  Tab to complete\033[0m")
         self._screen._append_content("")
 
     # ── Dispatch ──────────────────────────────────────────────────────────────
 
-    def _dispatch(self, raw: str) -> dict | None:
+    def _dispatch(self, raw: str) -> dict[str, Any] | None:
         parts = raw.split()
         token, args = parts[0], parts[1:]
         cmd = next((c for c in COMMANDS if c.matches(token)), None)
         if cmd is None:
             self._screen._append_content(
-                f"  {self._screen._theme.color_warning}⚠  Unknown command: {token!r}"
-                f"  (type /help)\033[0m"
+                f"  {self._screen._theme.color_warning}⚠  Unknown command: {token!r}  (type /help)\033[0m"
             )
             return None
-        handler = getattr(self, f"_cmd_{cmd.name.replace('-', '_')}", None)
+        handler: Callable[[list[str]], dict[str, Any] | None] | None = getattr(
+            self, f"_cmd_{cmd.name.replace('-', '_')}", None
+        )
         if handler is None:
             self._screen._append_content(
                 f"  {self._screen._theme.color_warning}⚠  Not yet implemented: {cmd.name}\033[0m"
@@ -203,6 +198,7 @@ class StartupCLI:
 
     def _show_status(self, workspace: Path) -> None:
         import json
+
         t = self._screen._theme
         a = self._screen._append_content
 
@@ -217,8 +213,8 @@ class StartupCLI:
         if handoff.exists():
             text = handoff.read_text(errors="replace")
             lines = text.splitlines()
-            status_l = next((l for l in reversed(lines) if l.startswith("STATUS:")), None)
-            next_l   = next((l for l in reversed(lines) if l.startswith("NEXT:")), None)
+            status_l = next((line for line in reversed(lines) if line.startswith("STATUS:")), None)
+            next_l = next((line for line in reversed(lines) if line.startswith("NEXT:")), None)
             row = f"  {t.text_dim}handoff.md\033[0m  {t.color_success}{status_l or 'present'}\033[0m"
             if next_l:
                 row += f"  {t.text_dim}{next_l}\033[0m"
@@ -231,7 +227,7 @@ class StartupCLI:
             try:
                 data = json.loads(tasks.read_text())
                 task_list = data if isinstance(data, list) else data.get("tasks", [])
-                done  = sum(1 for x in task_list if x.get("status") == "done")
+                done = sum(1 for x in task_list if x.get("status") == "done")
                 total = len(task_list)
                 a(f"  {t.text_dim}tasks.json\033[0m  {t.text_primary}{done}/{total} done\033[0m")
             except Exception:
@@ -253,12 +249,11 @@ class StartupCLI:
         return self._screen.read_input(f"{label} {hint}")
 
     def _warn(self, text: str) -> None:
-        self._screen._append_content(
-            f"  {self._screen._theme.color_warning}⚠  {text}\033[0m"
-        )
+        self._screen._append_content(f"  {self._screen._theme.color_warning}⚠  {text}\033[0m")
 
 
 # ── readline tab-completion ───────────────────────────────────────────────────
+
 
 def _setup_readline(command_names: list[str]) -> None:
     if not _RL:
@@ -278,6 +273,7 @@ def _setup_readline(command_names: list[str]) -> None:
         if history.exists():
             _rl.read_history_file(str(history))
         import atexit
+
         atexit.register(_rl.write_history_file, str(history))
     except Exception:
         pass

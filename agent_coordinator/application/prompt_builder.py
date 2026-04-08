@@ -59,23 +59,16 @@ class PromptBuilder:
 
         if first_turn:
             project_section = (
-                f"\n\n---\n\n## Project Rules (from AGENTS.md)\n\n{project_rules}\n"
-                if project_rules else ""
+                f"\n\n---\n\n## Project Rules (from AGENTS.md)\n\n{project_rules}\n" if project_rules else ""
             )
-            docs_section = (
-                f"\n\n---\n\n{project_docs}\n"
-                if project_docs else ""
-            )
+            docs_section = f"\n\n---\n\n{project_docs}\n" if project_docs else ""
             preamble = (
                 f"You are the **{role.upper()} agent** for this project. "
                 f"Your working directory is `{workspace}`.\n\n"
                 f"{role_prompt}{project_section}{docs_section}\n\n---\n\n{shared_rules}\n\n---\n"
             )
         else:
-            preamble = (
-                f"You are the **{role.upper()} agent**. "
-                f"Your working directory is `{workspace}`.\n\n"
-            )
+            preamble = f"You are the **{role.upper()} agent**. Your working directory is `{workspace}`.\n\n"
 
         return (
             f"{preamble}\n"
@@ -107,10 +100,7 @@ class PromptBuilder:
         resolved = self._resolve_file(prompt_rel, workspace)
         if resolved:
             return resolved.read_text()
-        return (
-            f"You are the **{role.upper()} agent**. "
-            f"Follow the shared rules and handoff protocol."
-        )
+        return f"You are the **{role.upper()} agent**. Follow the shared rules and handoff protocol."
 
     def _load_shared_rules(self, workspace: Path) -> str:
         resolved = self._resolve_file("prompts/shared_rules.md", workspace)
@@ -132,12 +122,20 @@ class PromptBuilder:
         with section headers.
         """
         spec_names = (
-            "SPECIFICATION.md", "specification.md", "spec.md", "SPEC.md",
-            "PRD.md", "prd.md", "requirements.md", "REQUIREMENTS.md",
+            "SPECIFICATION.md",
+            "specification.md",
+            "spec.md",
+            "SPEC.md",
+            "PRD.md",
+            "prd.md",
+            "requirements.md",
+            "REQUIREMENTS.md",
         )
         plan_names = (
-            "IMPLEMENTATION_PLAN.md", "implementation_plan.md",
-            "plan.md", "PLAN.md",
+            "IMPLEMENTATION_PLAN.md",
+            "implementation_plan.md",
+            "plan.md",
+            "PLAN.md",
         )
 
         sections: list[str] = []
@@ -145,19 +143,13 @@ class PromptBuilder:
         for name in spec_names:
             path = workspace / name
             if path.exists():
-                sections.append(
-                    f"## Project Specification (from {name})\n\n"
-                    f"{path.read_text().strip()}"
-                )
+                sections.append(f"## Project Specification (from {name})\n\n{path.read_text().strip()}")
                 break
 
         for name in plan_names:
             path = workspace / name
             if path.exists():
-                sections.append(
-                    f"## Implementation Plan (from {name})\n\n"
-                    f"{path.read_text().strip()}"
-                )
+                sections.append(f"## Implementation Plan (from {name})\n\n{path.read_text().strip()}")
                 break
 
         return "\n\n---\n\n".join(sections)
@@ -166,9 +158,7 @@ class PromptBuilder:
     def _task_context(task: Task | None) -> str:
         if task is None:
             return ""
-        rework_note = (
-            f" (rework #{task.rework_count})" if task.rework_count > 0 else ""
-        )
+        rework_note = f" (rework #{task.rework_count})" if task.rework_count > 0 else ""
         return (
             f"### Next ready task{rework_note}\n\n"
             f"- **ID**: {task.id}\n"

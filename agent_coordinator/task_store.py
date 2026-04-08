@@ -35,4 +35,3 @@ class TaskStore:
 
     def set_acceptance_criteria(self, task_id: str, criteria: list[str]) -> None:
         self._service.set_acceptance_criteria(task_id, criteria)
-

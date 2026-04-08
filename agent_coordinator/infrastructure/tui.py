@@ -28,22 +28,28 @@ Layout (inside alternate screen)
 
 from __future__ import annotations
 
+import contextlib
 import os
+import pathlib
 import re
 import shutil
 import signal
 import sys
 import threading
 import time
+import typing
+from collections.abc import Callable
 from enum import Enum
-from typing import Callable, TextIO
+from types import FrameType
+from typing import Any, TextIO
 
 try:
     import termios
-    import tty
+    import tty  # noqa: F401 — required side-effect of termios availability
+
     _HAS_TERMIOS = True
 except ImportError:
-    _HAS_TERMIOS = False   # Windows / unusual environments
+    _HAS_TERMIOS = False  # Windows / unusual environments
 
 
 # ── ANSI helpers ──────────────────────────────────────────────────────────────
@@ -51,34 +57,57 @@ except ImportError:
 ESC = "\033"
 _ANSI_RE = re.compile(r"\033\[[0-9;]*[mGKHJABCDsuhr]|\033\[[?][0-9]*[hl]")
 
+
 def _csi(*parts: str) -> str:
     return ESC + "[" + "".join(parts)
 
+
 # Cursor movement
-def _cup(row: int, col: int = 1) -> str:   return _csi(f"{row};{col}H")
-def _el()  -> str:                          return _csi("2K")          # erase line
-def _ed()  -> str:                          return _csi("J")           # erase to end of screen
-def _sc()  -> str:                          return ESC + "7"           # save cursor (DEC)
-def _rc()  -> str:                          return ESC + "8"           # restore cursor
+def _cup(row: int, col: int = 1) -> str:
+    return _csi(f"{row};{col}H")
+
+
+def _el() -> str:
+    return _csi("2K")  # erase line
+
+
+def _ed() -> str:
+    return _csi("J")  # erase to end of screen
+
+
+def _sc() -> str:
+    return ESC + "7"  # save cursor (DEC)
+
+
+def _rc() -> str:
+    return ESC + "8"  # restore cursor
+
 
 # Alternate screen
-_ALT_ENTER  = _csi("?1049h")
-_ALT_EXIT   = _csi("?1049l")
+_ALT_ENTER = _csi("?1049h")
+_ALT_EXIT = _csi("?1049l")
 _HIDE_CURSOR = _csi("?25l")
 _SHOW_CURSOR = _csi("?25h")
 
 # Colors / styles
-_RESET  = _csi("0m")
-_BOLD   = _csi("1m")
-_DIM    = _csi("2m")
+_RESET = _csi("0m")
+_BOLD = _csi("1m")
+_DIM = _csi("2m")
 
-def _tc(r: int, g: int, b: int) -> str: return _csi(f"38;2;{r};{g};{b}m")   # true-color fg
-def _bc(r: int, g: int, b: int) -> str: return _csi(f"48;2;{r};{g};{b}m")   # true-color bg
+
+def _tc(r: int, g: int, b: int) -> str:
+    return _csi(f"38;2;{r};{g};{b}m")  # true-color fg
+
+
+def _bc(r: int, g: int, b: int) -> str:
+    return _csi(f"48;2;{r};{g};{b}m")  # true-color bg
+
 
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
 
 # ── Theme ─────────────────────────────────────────────────────────────────────
+
 
 class Theme:
     """
@@ -92,94 +121,100 @@ class Theme:
         self,
         name: str,
         # Status / header bars
-        bg_header:    str,
-        bg_status:    str,
+        bg_header: str,
+        bg_status: str,
         bg_separator: str,
         # Agent LED states
-        led_running:  str,   # ● blinking — agent active
-        led_done:     str,   # ● steady   — finished last turn, idle now
-        led_error:    str,   # ● steady
-        led_blocked:  str,   # ● steady
-        led_idle:     str,   # ○ — never ran
+        led_running: str,  # ● blinking — agent active
+        led_done: str,  # ● steady   — finished last turn, idle now
+        led_error: str,  # ● steady
+        led_blocked: str,  # ● steady
+        led_idle: str,  # ○ — never ran
         # Text
-        text_primary:   str,
+        text_primary: str,
         text_secondary: str,
-        text_dim:       str,
+        text_dim: str,
         # Syntax
-        color_agent:    str,   # agent name in turn headers
-        color_success:  str,   # ✓ markers
-        color_warning:  str,   # ✗ / warnings
-        color_info:     str,   # info lines
+        color_agent: str,  # agent name in turn headers
+        color_success: str,  # ✓ markers
+        color_warning: str,  # ✗ / warnings
+        color_info: str,  # info lines
     ) -> None:
-        self.name         = name
-        self.bg_header    = bg_header
-        self.bg_status    = bg_status
+        self.name = name
+        self.bg_header = bg_header
+        self.bg_status = bg_status
         self.bg_separator = bg_separator
-        self.led_running  = led_running
-        self.led_done     = led_done
-        self.led_error    = led_error
-        self.led_blocked  = led_blocked
-        self.led_idle     = led_idle
-        self.text_primary   = text_primary
+        self.led_running = led_running
+        self.led_done = led_done
+        self.led_error = led_error
+        self.led_blocked = led_blocked
+        self.led_idle = led_idle
+        self.text_primary = text_primary
         self.text_secondary = text_secondary
-        self.text_dim       = text_dim
-        self.color_agent    = color_agent
-        self.color_success  = color_success
-        self.color_warning  = color_warning
-        self.color_info     = color_info
+        self.text_dim = text_dim
+        self.color_agent = color_agent
+        self.color_success = color_success
+        self.color_warning = color_warning
+        self.color_info = color_info
 
 
 # ── Built-in themes ───────────────────────────────────────────────────────────
 
+
 def _catppuccin_frappe() -> Theme:
     """Catppuccin Frappé — https://github.com/catppuccin/catppuccin"""
     return Theme(
-        name          = "catppuccin-frappe",
-        bg_header     = _bc(41,  44,  60),   # Mantle  #292c3c
-        bg_status     = _bc(35,  38,  52),   # Crust   #232634
-        bg_separator  = _bc(65,  69,  89),   # Surface1 #414559 — slightly lighter
-        led_running   = _tc(166, 209, 137),  # Green   #a6d189
-        led_done      = _tc(131, 139, 167),  # Overlay1 #838ba7 — neutral, not green
-        led_error     = _tc(231, 130, 132),  # Red     #e78284
-        led_blocked   = _tc(229, 200, 144),  # Yellow  #e5c890
-        led_idle      = _tc(115, 121, 148),  # Overlay0 #737994
-        text_primary  = _tc(198, 208, 245),  # Text    #c6d0f5
-        text_secondary= _tc(165, 173, 206),  # Subtext0 #a5adce
-        text_dim      = _tc(115, 121, 148),  # Overlay0 #737994
-        color_agent   = _tc(140, 170, 238),  # Blue    #8caaee
-        color_success = _tc(166, 209, 137),  # Green   #a6d189
-        color_warning = _tc(239, 159, 118),  # Peach   #ef9f76
-        color_info    = _tc(133, 193, 220),  # Sapphire #85c1dc
+        name="catppuccin-frappe",
+        bg_header=_bc(41, 44, 60),  # Mantle  #292c3c
+        bg_status=_bc(35, 38, 52),  # Crust   #232634
+        bg_separator=_bc(65, 69, 89),  # Surface1 #414559 — slightly lighter
+        led_running=_tc(166, 209, 137),  # Green   #a6d189
+        led_done=_tc(131, 139, 167),  # Overlay1 #838ba7 — neutral, not green
+        led_error=_tc(231, 130, 132),  # Red     #e78284
+        led_blocked=_tc(229, 200, 144),  # Yellow  #e5c890
+        led_idle=_tc(115, 121, 148),  # Overlay0 #737994
+        text_primary=_tc(198, 208, 245),  # Text    #c6d0f5
+        text_secondary=_tc(165, 173, 206),  # Subtext0 #a5adce
+        text_dim=_tc(115, 121, 148),  # Overlay0 #737994
+        color_agent=_tc(140, 170, 238),  # Blue    #8caaee
+        color_success=_tc(166, 209, 137),  # Green   #a6d189
+        color_warning=_tc(239, 159, 118),  # Peach   #ef9f76
+        color_info=_tc(133, 193, 220),  # Sapphire #85c1dc
     )
 
 
 def _dark_default() -> Theme:
     """Classic dark theme (original hardcoded palette)."""
-    g = lambda n: _csi(f"38;5;{n}m")
-    b = lambda n: _csi(f"48;5;{n}m")
+
+    def g(n: int) -> str:
+        return _csi(f"38;5;{n}m")
+
+    def b(n: int) -> str:
+        return _csi(f"48;5;{n}m")
+
     return Theme(
-        name          = "dark",
-        bg_header     = b(235),
-        bg_status     = b(236),
-        bg_separator  = b(238),
-        led_running   = g(46),    # bright green
-        led_done      = g(240),   # dim gray — not green when idle
-        led_error     = g(196),   # red
-        led_blocked   = g(226),   # yellow
-        led_idle      = g(238),   # very dim gray
-        text_primary  = g(255),
-        text_secondary= g(245),
-        text_dim      = g(240),
-        color_agent   = g(87),    # cyan
-        color_success = g(46),
-        color_warning = g(214),
-        color_info    = g(33),
+        name="dark",
+        bg_header=b(235),
+        bg_status=b(236),
+        bg_separator=b(238),
+        led_running=g(46),  # bright green
+        led_done=g(240),  # dim gray — not green when idle
+        led_error=g(196),  # red
+        led_blocked=g(226),  # yellow
+        led_idle=g(238),  # very dim gray
+        text_primary=g(255),
+        text_secondary=g(245),
+        text_dim=g(240),
+        color_agent=g(87),  # cyan
+        color_success=g(46),
+        color_warning=g(214),
+        color_info=g(33),
     )
 
 
 _THEMES: dict[str, Theme] = {
     "catppuccin-frappe": _catppuccin_frappe(),
-    "dark":              _dark_default(),
+    "dark": _dark_default(),
 }
 
 DEFAULT_THEME_NAME = "catppuccin-frappe"
@@ -192,32 +227,36 @@ def get_theme(name: str | None = None) -> Theme:
 
 # ── Agent state ───────────────────────────────────────────────────────────────
 
+
 class AgentState(Enum):
-    IDLE    = "idle"
+    IDLE = "idle"
     RUNNING = "running"
-    DONE    = "done"     # finished last turn — control passed to another agent
-    ERROR   = "error"
+    DONE = "done"  # finished last turn — control passed to another agent
+    ERROR = "error"
     BLOCKED = "blocked"
 
+
 _STATE_DOT = {
-    AgentState.IDLE:    "○",
+    AgentState.IDLE: "○",
     AgentState.RUNNING: "●",
-    AgentState.DONE:    "●",
-    AgentState.ERROR:   "●",
+    AgentState.DONE: "●",
+    AgentState.ERROR: "●",
     AgentState.BLOCKED: "●",
 }
 
+
 def _state_color(state: AgentState, theme: Theme) -> str:
     return {
-        AgentState.IDLE:    theme.led_idle,
+        AgentState.IDLE: theme.led_idle,
         AgentState.RUNNING: theme.led_running,
-        AgentState.DONE:    theme.led_done,
-        AgentState.ERROR:   theme.led_error,
+        AgentState.DONE: theme.led_done,
+        AgentState.ERROR: theme.led_error,
         AgentState.BLOCKED: theme.led_blocked,
     }[state]
 
 
 # ── Popup ─────────────────────────────────────────────────────────────────────
+
 
 class Popup:
     """Reusable centered modal popup for the alt-screen TUI.
@@ -225,9 +264,9 @@ class Popup:
     Handles all box-drawing alignment math in one place.  Supports two
     layout modes that can be combined:
 
-    * **options** – horizontal flow-wrapped key/label pairs
+    * **options** - horizontal flow-wrapped key/label pairs
       (like the error-recovery dialog)
-    * **items** – vertical one-per-row entries with separator support
+    * **items** - vertical one-per-row entries with separator support
       (like the Ctrl+C interrupt menu)
 
     Usage::
@@ -241,7 +280,7 @@ class Popup:
         )
     """
 
-    def __init__(self, screen: "Screen") -> None:
+    def __init__(self, screen: Screen) -> None:
         self._scr = screen
 
     # ── Public ────────────────────────────────────────────────────────────────
@@ -370,11 +409,9 @@ class Popup:
 
         # Helpers — each produces exactly max_w visible characters
         def hline(left: str, fill: str, right: str, color: str = t.text_dim) -> str:
-            return (_cup(row, col0) + t.bg_status + color
-                    + left + fill * inner_w + right + _RESET)
+            return _cup(row, col0) + t.bg_status + color + left + fill * inner_w + right + _RESET
 
-        def content_row(text: str, *, color: str = t.text_primary,
-                        ansi_text: str | None = None) -> str:
+        def content_row(text: str, *, color: str = t.text_primary, ansi_text: str | None = None) -> str:
             """Render │ text ... │ with correct padding.
 
             If *ansi_text* is given it is printed instead of *text*, but
@@ -382,8 +419,7 @@ class Popup:
             """
             display = ansi_text if ansi_text is not None else text
             pad = max(0, inner_w - 1 - len(text))
-            return (_cup(row, col0) + t.bg_status + color
-                    + "│ " + display + " " * pad + "│" + _RESET)
+            return _cup(row, col0) + t.bg_status + color + "│ " + display + " " * pad + "│" + _RESET
 
         # Top border
         buf.append(hline("┌", "─", "┐", title_color + _BOLD))
@@ -425,10 +461,7 @@ class Popup:
         # Horizontal option rows
         for orow in opt_rows:
             plain = "".join(f"[{k}] {label}  " for k, label in orow)
-            ansi = "".join(
-                f"{t.color_agent}[{k}]{_RESET}{t.text_primary} {label}  "
-                for k, label in orow
-            )
+            ansi = "".join(f"{t.color_agent}[{k}]{_RESET}{t.text_primary} {label}  " for k, label in orow)
             buf.append(content_row(plain, ansi_text=ansi))
             row += 1
 
@@ -503,6 +536,7 @@ class Popup:
 
 # ── Screen ────────────────────────────────────────────────────────────────────
 
+
 class Screen:
     """
     Owns the alternate terminal screen.
@@ -515,41 +549,41 @@ class Screen:
     - thread-safe: a background thread blinks the active agent dot
     """
 
-    _HEADER_ROWS = 1   # number of rows reserved at top
-    _SEP_ROWS    = 1   # separator row above status bar
-    _STATUS_ROWS = 1   # pinned status bar
+    _HEADER_ROWS = 1  # number of rows reserved at top
+    _SEP_ROWS = 1  # separator row above status bar
+    _STATUS_ROWS = 1  # pinned status bar
 
     _MAX_LINES = 5000  # cap content buffer to prevent unbounded memory growth
 
     def __init__(self, stream: TextIO = sys.stdout, theme: Theme | None = None) -> None:
-        self._stream   = stream
-        self._lock     = threading.Lock()
-        self._theme    = theme or get_theme()
-        self._lines: list[str] = []          # content ring-buffer
-        self._cols  = 80
-        self._rows  = 24
-        self._content_rows = 20              # updated in _refresh_size
+        self._stream = stream
+        self._lock = threading.Lock()
+        self._theme = theme or get_theme()
+        self._lines: list[str] = []  # content ring-buffer
+        self._cols = 80
+        self._rows = 24
+        self._content_rows = 20  # updated in _refresh_size
 
         # State tracking
         self._agents: list[str] = []
         self._agent_states: dict[str, AgentState] = {}
-        self._current_agent   = ""
-        self._workspace       = ""
-        self._max_turns       = 0
-        self._current_turn    = 0
-        self._spinner_idx     = 0
-        self._blink_on        = True
-        self._active          = False        # are we in alt screen?
+        self._current_agent = ""
+        self._workspace = ""
+        self._max_turns = 0
+        self._current_turn = 0
+        self._spinner_idx = 0
+        self._blink_on = True
+        self._active = False  # are we in alt screen?
 
         # Animation thread
         self._anim_thread: threading.Thread | None = None
-        self._anim_stop   = threading.Event()
+        self._anim_stop = threading.Event()
 
         # Pause state
         self._paused = False
 
         # SIGWINCH for resize
-        self._orig_sigwinch: Callable | None = None
+        self._orig_sigwinch: Callable[[int, FrameType | None], Any] | int | None = None
 
         # Saved terminal settings (restored on close)
         self._orig_termios: list | None = None
@@ -590,10 +624,8 @@ class Screen:
                 self._orig_termios = None
         self._write(_ALT_ENTER + _HIDE_CURSOR)
         self._full_render()
-        try:
+        with contextlib.suppress(OSError, ValueError):
             self._orig_sigwinch = signal.signal(signal.SIGWINCH, self._on_resize)
-        except (OSError, ValueError):
-            pass
         self._start_animation()
 
     def read_input(self, prompt: str) -> str:
@@ -615,18 +647,21 @@ class Screen:
 
         # Re-enable echo + canonical for a normal input read
         if _HAS_TERMIOS and self._orig_termios is not None:
-            try:
+            with contextlib.suppress(termios.error):
                 termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, self._orig_termios)
-            except termios.error:
-                pass
 
         self._write(_SHOW_CURSOR)
         # Draw prompt line above separator
         prompt_render = (
             _cup(prompt_row, 1)
-            + t.bg_status + _el()
-            + t.color_agent + _BOLD + "  ❯ " + _RESET
-            + t.text_primary + prompt
+            + t.bg_status
+            + _el()
+            + t.color_agent
+            + _BOLD
+            + "  \u276f "
+            + _RESET
+            + t.text_primary
+            + prompt
         )
         self._write(prompt_render)
 
@@ -658,7 +693,7 @@ class Screen:
         if not self._stream.isatty():
             return
 
-        self._agents   = agents
+        self._agents = agents
         self._workspace = os.path.basename(workspace) or workspace
         self._max_turns = max_turns
         self._agent_states = {a: AgentState.IDLE for a in agents}
@@ -682,10 +717,8 @@ class Screen:
         self._full_render()
 
         # SIGWINCH resize handler
-        try:
+        with contextlib.suppress(OSError, ValueError):
             self._orig_sigwinch = signal.signal(signal.SIGWINCH, self._on_resize)
-        except (OSError, ValueError):
-            pass   # not available on Windows or non-main thread
 
         # Start animation thread
         self._start_animation()
@@ -695,12 +728,13 @@ class Screen:
         with self._lock:
             self._paused = paused
 
-    def with_editor(self, path: "Path | str") -> None:
+    def with_editor(self, path: pathlib.Path | str) -> None:
         """
         Temporarily leave alt-screen, open $EDITOR on path, then re-enter.
         Safe to call from the main thread while the animation thread is running.
         """
         import subprocess
+
         from agent_coordinator.infrastructure.editor import get_editor
 
         self._anim_stop.set()
@@ -708,16 +742,12 @@ class Screen:
             self._anim_thread.join(timeout=1)
 
         if _HAS_TERMIOS and self._orig_termios is not None:
-            try:
+            with contextlib.suppress(termios.error):
                 termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, self._orig_termios)
-            except termios.error:
-                pass
 
         self._write(_SHOW_CURSOR + _ALT_EXIT)
-        try:
+        with contextlib.suppress(Exception):
             subprocess.run([get_editor(), str(path)], check=True)
-        except Exception:
-            pass
 
         self._write(_ALT_ENTER + _HIDE_CURSOR)
         if _HAS_TERMIOS and self._orig_termios is not None:
@@ -746,10 +776,8 @@ class Screen:
 
         # Restore terminal settings
         if _HAS_TERMIOS and self._orig_termios is not None:
-            try:
+            with contextlib.suppress(termios.error):
                 termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, self._orig_termios)
-            except termios.error:
-                pass
             self._orig_termios = None
 
         self._active = False
@@ -764,7 +792,7 @@ class Screen:
 
     @max_output_lines.setter
     def max_output_lines(self, value: int) -> None:
-        pass   # we use the full content area; ignore the old fixed-size setting
+        pass  # we use the full content area; ignore the old fixed-size setting
 
     # Compatibility shim — cli.py sets this attribute
     @property
@@ -779,6 +807,7 @@ class Screen:
     class _FakeThinking:
         def stop(self) -> None:
             pass
+
         running = False
 
     thinking = _FakeThinking()
@@ -798,8 +827,7 @@ class Screen:
         sep = "─" * max(0, self._cols - 4)
         self._append_content("")
         self._append_content(
-            f"{t.color_agent}{_BOLD}▸ {agent.upper()}{_RESET}  "
-            f"{t.text_dim}{backend}  {task_id}  {status}{_RESET}"
+            f"{t.color_agent}{_BOLD}▸ {agent.upper()}{_RESET}  {t.text_dim}{backend}  {task_id}  {status}{_RESET}"
         )
         self._append_content(f"{t.text_dim}{sep}{_RESET}")
 
@@ -825,9 +853,7 @@ class Screen:
                 parts.append(f"status → {new_status}")
             if next_agent:
                 parts.append(f"next → {t.color_agent}{next_agent}{_RESET}")
-            self._append_content(
-                f"  {t.color_success}✓{_RESET}  " + "  ".join(parts)
-            )
+            self._append_content(f"  {t.color_success}✓{_RESET}  " + "  ".join(parts))
         else:
             self._set_state(self._current_agent, AgentState.ERROR)
             self._append_content(f"  {t.color_warning}✗  Turn incomplete{_RESET}")
@@ -856,9 +882,7 @@ class Screen:
         buf.append(self._render_separator())
         buf.append(self._render_status_bar())
         # park cursor in content area
-        content_cursor_row = self._HEADER_ROWS + min(
-            len(self._lines), self._content_rows
-        ) + 1
+        content_cursor_row = self._HEADER_ROWS + min(len(self._lines), self._content_rows) + 1
         buf.append(_cup(content_cursor_row, 1))
         self._write("".join(buf))
 
@@ -873,11 +897,14 @@ class Screen:
         pad = max(0, self._cols - len(title) - len(state_tag and "  ⏸ PAUSED") - len(turn_info))
         return (
             _cup(1, 1)
-            + t.bg_header + t.text_primary + _BOLD
+            + t.bg_header
+            + t.text_primary
+            + _BOLD
             + title
             + (state_tag if self._paused else "")
             + " " * pad
-            + t.text_dim + turn_info
+            + t.text_dim
+            + turn_info
             + _RESET
         )
 
@@ -896,12 +923,7 @@ class Screen:
     def _render_separator(self) -> str:
         t = self._theme
         row = self._rows - self._STATUS_ROWS - 1
-        return (
-            _cup(row, 1)
-            + t.bg_separator + t.text_dim
-            + "─" * self._cols
-            + _RESET
-        )
+        return _cup(row, 1) + t.bg_separator + t.text_dim + "─" * self._cols + _RESET
 
     def _render_status_bar(self) -> str:
         t = self._theme
@@ -923,44 +945,28 @@ class Screen:
             if state == AgentState.RUNNING:
                 spinner = f" {t.text_dim}{SPINNER_FRAMES[self._spinner_idx % len(SPINNER_FRAMES)]}{_RESET}"
 
-            parts.append(
-                f" {color}{dot}{_RESET} {t.text_primary}{agent}{_RESET}{spinner}"
-            )
+            parts.append(f" {color}{dot}{_RESET} {t.text_primary}{agent}{_RESET}{spinner}")
 
         left = "  ".join(parts)
         right = f"  {t.text_dim}{self._workspace}  {_RESET}"
-        left_vis  = _strip_ansi(left)
+        left_vis = _strip_ansi(left)
         right_vis = _strip_ansi(right)
         pad = max(0, self._cols - len(left_vis) - len(right_vis))
 
-        return (
-            _cup(row, 1)
-            + t.bg_status + t.text_secondary
-            + _el()
-            + left
-            + " " * pad
-            + right
-            + _RESET
-        )
+        return _cup(row, 1) + t.bg_status + t.text_secondary + _el() + left + " " * pad + right + _RESET
 
     def _append_content(self, text: str) -> None:
         """Add a line to the content ring-buffer and re-render content + status."""
         with self._lock:
             self._lines.append(text)
             if len(self._lines) > self._MAX_LINES:
-                self._lines = self._lines[-self._MAX_LINES:]
+                self._lines = self._lines[-self._MAX_LINES :]
             if not self._active:
                 # non-alt-screen fallback: just print
                 print(_strip_ansi(text))
                 return
             # Re-render content area and status bar (no full redraw)
-            buf = (
-                _sc()
-                + self._render_content_block()
-                + self._render_separator()
-                + self._render_status_bar()
-                + _rc()
-            )
+            buf = _sc() + self._render_content_block() + self._render_separator() + self._render_status_bar() + _rc()
             self._write(buf)
 
     def _set_state(self, agent: str, state: AgentState) -> None:
@@ -987,12 +993,7 @@ class Screen:
             with self._lock:
                 if not self._active:
                     continue
-                buf = (
-                    _sc()
-                    + self._render_header()
-                    + self._render_status_bar()
-                    + _rc()
-                )
+                buf = _sc() + self._render_header() + self._render_status_bar() + _rc()
                 self._write(buf)
 
     # ── Resize ─────────────────────────────────────────────────────────────────
@@ -1012,12 +1013,14 @@ class Screen:
             # If the terminal write itself fails, restore state and log
             try:
                 from agent_coordinator.infrastructure.diagnostic_log import get_logger
+
                 get_logger().error("tui _write failed", exc_info=exc)
             except Exception:
                 pass
 
 
 # ── Simple fallback (non-TTY) ─────────────────────────────────────────────────
+
 
 class SimpleProgressDisplay:
     """Plain-text fallback for pipes / CI / non-TTY environments."""
@@ -1026,16 +1029,18 @@ class SimpleProgressDisplay:
         self._stream = stream
 
     class _FakeThinking:
-        def stop(self) -> None:  pass
+        def stop(self) -> None:
+            pass
+
         running = False
 
-    thinking     = _FakeThinking()
+    thinking = _FakeThinking()
     stream_delay = 0.0
     max_output_lines = 999
 
     def start_run(self, agents: list[str], workspace: str, max_turns: int) -> None:
         w = shutil.get_terminal_size().columns
-        self._p(f"\n{'─'*w}")
+        self._p(f"\n{'─' * w}")
         turns_display = "unlimited" if max_turns == 0 else str(max_turns)
         self._p(f"  AGENT COORDINATOR  workspace={workspace}  max_turns={turns_display}")
         self._p("─" * w)
@@ -1065,6 +1070,7 @@ class SimpleProgressDisplay:
 
 # ── Interrupt menu ────────────────────────────────────────────────────────────
 
+
 class InterruptMenu:
     """Ctrl+C menu rendered as a centered popup inside the alt-screen.
 
@@ -1072,7 +1078,7 @@ class InterruptMenu:
     Falls back to plain text when not in alt-screen mode.
     """
 
-    _ITEMS = [
+    _ITEMS: typing.ClassVar[list[tuple[str, str]]] = [
         ("c", "Continue execution"),
         ("t", "Stop after this turn"),
         ("r", "Retry current turn"),
@@ -1089,7 +1095,7 @@ class InterruptMenu:
         ("q", "Quit"),
     ]
 
-    def __init__(self, display: "Screen | SimpleProgressDisplay | None" = None) -> None:
+    def __init__(self, display: Screen | SimpleProgressDisplay | None = None) -> None:
         self._display = display
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -1115,6 +1121,7 @@ class InterruptMenu:
                 items.append(None)
             else:
                 items.append((key, desc))
+        assert isinstance(self._display, Screen)
         return Popup(self._display).show(
             title="INTERRUPTED",
             items=items,
@@ -1137,7 +1144,8 @@ class InterruptMenu:
         print("═" * w)
         sys.stdout.flush()
         try:
-            from agent_coordinator.infrastructure.enhanced_input import enhanced_choice, Colors
+            from agent_coordinator.infrastructure.enhanced_input import Colors, enhanced_choice
+
             valid = []
             for key, _ in self._ITEMS:
                 if key != "─":
@@ -1151,13 +1159,15 @@ class InterruptMenu:
         msg = ""
         if use_editor and sys.stdin.isatty():
             from agent_coordinator.infrastructure.editor import edit_handoff_message
+
             print("\nOpening editor for your message...")
             try:
                 msg = edit_handoff_message()
             except Exception as e:
                 print(f"Editor error: {e}")
         if not msg:
-            from agent_coordinator.infrastructure.enhanced_input import enhanced_multiline, Colors
+            from agent_coordinator.infrastructure.enhanced_input import Colors, enhanced_multiline
+
             print()
             msg = enhanced_multiline(
                 Colors.info("Enter message (empty line to finish):"),
@@ -1167,6 +1177,7 @@ class InterruptMenu:
 
 
 # ── Utility ───────────────────────────────────────────────────────────────────
+
 
 def _classify_error(exc: BaseException) -> tuple[str, str]:
     """Return (dialog title, friendly message) for a given exception."""
@@ -1179,7 +1190,7 @@ def _classify_error(exc: BaseException) -> tuple[str, str]:
         return (
             "Model Not Available",
             f'The model "{model}" is not available for this backend.\n\n'
-            f"Edit agents.json to change the \"model\" field for this agent,\n"
+            f'Edit agents.json to change the "model" field for this agent,\n'
             f"or remove it to use the backend's default.",
         )
 
@@ -1192,7 +1203,7 @@ def _classify_error(exc: BaseException) -> tuple[str, str]:
 
     if "copilot exited" in msg or "exited 1" in msg:
         # Extract the actual error line from the backend
-        lines = [l.strip() for l in msg.splitlines() if l.strip()]
+        lines = [line.strip() for line in msg.splitlines() if line.strip()]
         detail = lines[1] if len(lines) > 1 else lines[0] if lines else msg
         return (
             "Backend Error",
@@ -1219,12 +1230,15 @@ def _classify_error(exc: BaseException) -> tuple[str, str]:
         msg if msg else "An unexpected error occurred.",
     )
 
+
 def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
+
 
 def _wrap_text(text: str, width: int) -> list[str]:
     """Word-wrap plain text to width, preserving existing newlines."""
     import textwrap
+
     result: list[str] = []
     for paragraph in text.split("\n"):
         if not paragraph.strip():
@@ -1236,11 +1250,12 @@ def _wrap_text(text: str, width: int) -> list[str]:
 
 # ── Factory ───────────────────────────────────────────────────────────────────
 
+
 def create_display(
     reserved_lines: int = 10,
     force_simple: bool = False,
     theme: str | None = None,
-) -> "Screen | SimpleProgressDisplay":
+) -> Screen | SimpleProgressDisplay:
     """Return a Screen (TTY) or SimpleProgressDisplay (non-TTY / forced)."""
     if not force_simple and sys.stdout.isatty():
         return Screen(theme=get_theme(theme))
@@ -1249,4 +1264,3 @@ def create_display(
 
 # Back-compat alias
 TUIDisplay = Screen
-

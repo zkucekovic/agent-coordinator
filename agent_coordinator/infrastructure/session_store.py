@@ -34,10 +34,9 @@ class SessionStore:
 
     def _load(self) -> dict[str, str]:
         if self._path.exists():
-            return json.loads(self._path.read_text(encoding="utf-8"))
+            data: dict[str, str] = json.loads(self._path.read_text(encoding="utf-8"))
+            return data
         return {}
 
     def _persist(self) -> None:
-        self._path.write_text(
-            json.dumps(self._sessions, indent=2), encoding="utf-8"
-        )
+        self._path.write_text(json.dumps(self._sessions, indent=2), encoding="utf-8")

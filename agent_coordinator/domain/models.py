@@ -12,6 +12,7 @@ from enum import Enum
 @dataclass(frozen=True)
 class RunResult:
     """Result of a single agent turn, returned by any AgentRunner implementation."""
+
     session_id: str
     text: str
 
@@ -24,7 +25,7 @@ class TaskStatus(Enum):
     REWORK_REQUESTED = "rework_requested"
     DONE = "done"
     BLOCKED = "blocked"
-    NEEDS_HUMAN = "needs_human"   # retry limit exceeded; human must intervene
+    NEEDS_HUMAN = "needs_human"  # retry limit exceeded; human must intervene
 
 
 class HandoffStatus(Enum):
@@ -41,12 +42,14 @@ class HandoffStatus(Enum):
 
 class AgentRole(Enum):
     """Built-in role constants. Custom roles are plain strings — any value is valid."""
+
     ARCHITECT = "architect"
     ENGINEER = "engineer"
 
 
 class NextActor(Enum):
     """Sentinel values for routing. Agents can also route to custom role names."""
+
     ARCHITECT = "architect"
     ENGINEER = "engineer"
     HUMAN = "human"
@@ -67,9 +70,9 @@ class Task:
 
 @dataclass
 class HandoffMessage:
-    role: str           # any agent role name (e.g. "architect", "qa", "frontend")
+    role: str  # any agent role name (e.g. "architect", "qa", "frontend")
     status: HandoffStatus
-    next: str           # any agent role name, or "human" / "none"
+    next: str  # any agent role name, or "human" / "none"
     task_id: str
     title: str
     summary: str
