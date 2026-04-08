@@ -2,9 +2,9 @@
 
 import unittest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 from agent_coordinator.infrastructure.generic_runner import GenericRunner
-from agent_coordinator.domain.models import RunResult
 from agent_coordinator.infrastructure.pty_utils import PtyResult
 
 
@@ -41,7 +41,9 @@ class TestGenericRunner(unittest.TestCase):
     @patch("agent_coordinator.infrastructure.generic_runner.run_with_pty")
     def test_json_output_format(self, mock_run):
         """GenericRunner can parse JSON output."""
-        mock_run.return_value = PtyResult(returncode=0, stdout='{"result": "JSON response", "session_id": "sess123"}', stderr="")
+        mock_run.return_value = PtyResult(
+            returncode=0, stdout='{"result": "JSON response", "session_id": "sess123"}', stderr=""
+        )
 
         config = {
             "command": ["my-tool", "run"],
@@ -103,7 +105,7 @@ class TestGenericRunner(unittest.TestCase):
 
         # Get the actual command that was called
         called_cmd = mock_run.call_args[0][0]
-        
+
         self.assertEqual(called_cmd[0:2], ["my-tool", "run"])
         self.assertIn("--prompt=test prompt", called_cmd)
         self.assertIn("--dir", called_cmd)
@@ -132,7 +134,7 @@ class TestGenericRunner(unittest.TestCase):
         )
 
         called_cmd = mock_run.call_args[0][0]
-        
+
         # Should have command + message only
         self.assertEqual(called_cmd, ["my-tool", "run", "test prompt"])
 
@@ -146,16 +148,18 @@ class TestGenericRunner(unittest.TestCase):
             "output_format": "text",
         }
         runner = GenericRunner(config, verbose=False)
-        
+
         with self.assertRaises(RuntimeError) as ctx:
             runner.run("test", Path("/tmp"), None, None)
-        
+
         self.assertIn("exited 1", str(ctx.exception))
 
     @patch("agent_coordinator.infrastructure.generic_runner.run_with_pty")
     def test_custom_json_fields(self, mock_run):
         """GenericRunner can use custom JSON field names."""
-        mock_run.return_value = PtyResult(returncode=0, stdout='{"response": "Custom response", "id": "custom123"}', stderr="")
+        mock_run.return_value = PtyResult(
+            returncode=0, stdout='{"response": "Custom response", "id": "custom123"}', stderr=""
+        )
 
         config = {
             "command": ["my-tool"],

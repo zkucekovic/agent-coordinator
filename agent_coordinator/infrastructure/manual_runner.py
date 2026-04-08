@@ -36,7 +36,7 @@ class ManualRunner(AgentRunner):
         message: str,
         workspace: Path,
         session_id: str | None = None,
-        model: str | None = None,
+        model: str | None = None,  # noqa: ARG002
         on_output: Callable[[str], None] | None = None,
     ) -> RunResult:
         """

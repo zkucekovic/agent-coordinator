@@ -1,6 +1,6 @@
 """Unit tests for agent_coordinator/infrastructure/tui.py"""
+
 import io
-import sys
 import unittest
 
 from agent_coordinator.infrastructure.tui import (
@@ -18,10 +18,18 @@ from agent_coordinator.infrastructure.tui import (
 
 class TestGetTheme(unittest.TestCase):
     _REQUIRED_FIELDS = (
-        "bg_header", "bg_status", "bg_separator",
-        "led_running", "led_error", "led_blocked",
-        "text_primary", "text_secondary", "text_dim",
-        "color_agent", "color_success", "color_warning",
+        "bg_header",
+        "bg_status",
+        "bg_separator",
+        "led_running",
+        "led_error",
+        "led_blocked",
+        "text_primary",
+        "text_secondary",
+        "text_dim",
+        "color_agent",
+        "color_success",
+        "color_warning",
     )
 
     def _assert_theme(self, theme: Theme) -> None:

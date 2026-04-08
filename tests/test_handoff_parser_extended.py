@@ -13,8 +13,8 @@ import unittest
 
 from agent_coordinator.handoff_parser import _parse_list_field, extract_latest, parse_block
 
-
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
 
 def _make_block(**overrides) -> str:
     """Build a minimal valid block text, with any field overridable."""
@@ -33,61 +33,39 @@ def _make_block(**overrides) -> str:
 
 # ── _parse_list_field (line 58) ────────────────────────────────────────────────
 
+
 class TestParseListFieldNonBulletLine(unittest.TestCase):
     """Line 58: a non-empty, non-bullet, non-comment line inside a list section
     is appended to items without stripping a leading '- '."""
 
     def test_plain_text_line_in_section_is_included(self):
         # An item that does NOT start with "- " should still be captured.
-        block = (
-            "ROLE: architect\n"
-            "ACCEPTANCE:\n"
-            "plain item without dash\n"
-            "STATUS: continue\n"
-        )
+        block = "ROLE: architect\nACCEPTANCE:\nplain item without dash\nSTATUS: continue\n"
         items = _parse_list_field(block, "ACCEPTANCE")
         self.assertIn("plain item without dash", items)
 
     def test_mixed_bullet_and_plain_lines(self):
-        block = (
-            "ROLE: architect\n"
-            "ACCEPTANCE:\n"
-            "- bullet item\n"
-            "plain item\n"
-            "STATUS: continue\n"
-        )
+        block = "ROLE: architect\nACCEPTANCE:\n- bullet item\nplain item\nSTATUS: continue\n"
         items = _parse_list_field(block, "ACCEPTANCE")
         self.assertIn("bullet item", items)
         self.assertIn("plain item", items)
 
     def test_comment_lines_skipped(self):
         # Lines starting with '#' should NOT be included.
-        block = (
-            "ROLE: architect\n"
-            "ACCEPTANCE:\n"
-            "# this is a comment\n"
-            "- real item\n"
-            "STATUS: continue\n"
-        )
+        block = "ROLE: architect\nACCEPTANCE:\n# this is a comment\n- real item\nSTATUS: continue\n"
         items = _parse_list_field(block, "ACCEPTANCE")
         self.assertNotIn("# this is a comment", items)
         self.assertIn("real item", items)
 
     def test_empty_lines_skipped(self):
-        block = (
-            "ROLE: architect\n"
-            "ACCEPTANCE:\n"
-            "\n"
-            "- real item\n"
-            "\n"
-            "STATUS: continue\n"
-        )
+        block = "ROLE: architect\nACCEPTANCE:\n\n- real item\n\nSTATUS: continue\n"
         items = _parse_list_field(block, "ACCEPTANCE")
         self.assertNotIn("", items)
         self.assertIn("real item", items)
 
 
 # ── parse_block empty ROLE (lines 83-84) ──────────────────────────────────────
+
 
 class TestParseBlockEmptyRole(unittest.TestCase):
     """Lines 83-84: ROLE field present but value is whitespace → error.
@@ -106,11 +84,11 @@ class TestParseBlockEmptyRole(unittest.TestCase):
         "TASK_ID: task-001\n"
         "TITLE: Test\n"
         "SUMMARY: Summary\n"
-        "ROLE:   "   # last field, no trailing newline → (.+) captures " ", strip → ""
+        "ROLE:   "  # last field, no trailing newline → (.+) captures " ", strip → ""
     )
 
     def test_whitespace_role_returns_none(self):
-        msg, errors = parse_block(self._BLOCK)
+        msg, _errors = parse_block(self._BLOCK)
         self.assertIsNone(msg)
 
     def test_empty_role_error_message(self):
@@ -121,6 +99,7 @@ class TestParseBlockEmptyRole(unittest.TestCase):
 
 
 # ── parse_block empty NEXT (line 96) ──────────────────────────────────────────
+
 
 class TestParseBlockEmptyNext(unittest.TestCase):
     """Line 96: NEXT field present but value is whitespace → error.
@@ -136,11 +115,11 @@ class TestParseBlockEmptyNext(unittest.TestCase):
         "TASK_ID: task-001\n"
         "TITLE: Test\n"
         "SUMMARY: Summary\n"
-        "NEXT:   "   # last field, no trailing newline
+        "NEXT:   "  # last field, no trailing newline
     )
 
     def test_whitespace_next_returns_none(self):
-        msg, errors = parse_block(self._BLOCK)
+        msg, _errors = parse_block(self._BLOCK)
         self.assertIsNone(msg)
 
     def test_empty_next_error_message(self):
@@ -153,6 +132,7 @@ class TestParseBlockEmptyNext(unittest.TestCase):
 
 
 # ── extract_latest all-invalid blocks (lines 135-137) ─────────────────────────
+
 
 class TestExtractLatestAllInvalid(unittest.TestCase):
     """Lines 135-137: all blocks fail to parse → returns errors from the last
@@ -184,17 +164,17 @@ class TestExtractLatestAllInvalid(unittest.TestCase):
     )
 
     def test_returns_none_when_all_invalid(self):
-        msg, errors = extract_latest(self.ALL_INVALID)
+        msg, _errors = extract_latest(self.ALL_INVALID)
         self.assertIsNone(msg)
 
     def test_returns_errors_from_last_block(self):
-        msg, errors = extract_latest(self.ALL_INVALID)
+        _msg, errors = extract_latest(self.ALL_INVALID)
         self.assertTrue(len(errors) > 0, "Expected errors but got none")
 
     def test_errors_come_from_first_content_block(self):
         # The first block is processed last in the reversed loop → its errors
         # end up in last_errors and are returned.
-        msg, errors = extract_latest(self.ALL_INVALID)
+        _msg, errors = extract_latest(self.ALL_INVALID)
         self.assertTrue(
             any("Missing required field" in e for e in errors),
             f"Expected 'Missing required field' errors from first block, got: {errors}",

@@ -48,8 +48,8 @@ def detect_doc_type(content: str) -> str:
 
 def extract_title(content: str) -> str:
     """Return the first H1 heading, or 'Imported Document'."""
-    for line in content.splitlines():
-        line = line.strip()
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
         if line.startswith("# "):
             return line[2:].strip()
     return "Imported Document"
@@ -197,8 +197,8 @@ def _extract_bullets(text: str, section_hint: str = "") -> list[str]:
         scope = text
 
     items = []
-    for line in scope.splitlines():
-        line = line.strip()
+    for raw_line in scope.splitlines():
+        line = raw_line.strip()
         if re.match(r"^[-*•]\s+", line):
             items.append(re.sub(r"^[-*•]\s+", "", line).strip())
         elif re.match(r"^\d+\.\s+", line):

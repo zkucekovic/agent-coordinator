@@ -7,7 +7,7 @@ Works with [GitHub Copilot CLI](https://github.com/features/copilot), [Claude Co
 Shared files:
 - **`handoff.md`** — agent conversation history, append-only
 - **`tasks.json`** — task state, updated automatically
-- **`workflow_events.jsonl`** — audit log with timestamps
+- **`.agent-coordinator/`** — coordinator state (sessions, event log, debug log)
 
 ## Install
 
@@ -65,7 +65,7 @@ BLOCKERS:
 ---END---
 ```
 
-Each turn: read `NEXT:` → build prompt → dispatch → verify new block appended (retry if not) → sync `tasks.json` → log to `workflow_events.jsonl`.
+Each turn: read `NEXT:` → build prompt → dispatch → verify new block appended (retry if not) → sync `tasks.json` → log to `.agent-coordinator/events.jsonl`.
 
 ### Status values
 
@@ -119,7 +119,7 @@ Each agent can use a different backend. Built-in: `copilot`, `claude`, `opencode
 
 | Flag | Default | Description |
 |---|---|---|
-| `--workspace PATH` | `workspace/` | Directory with handoff.md and project files |
+| `--workspace PATH` | `.` (cwd) | Directory with handoff.md and project files |
 | `--max-turns N` | `30` | Stop after N agent turns |
 | `--reset` | | Clear saved sessions and start fresh |
 | `--quiet` | | Suppress TUI output |
@@ -139,7 +139,7 @@ Drop these in your workspace to inject them into agent prompts on first turn:
 
 ### Sessions
 
-Session IDs are saved in `<workspace>/.coordinator_sessions.json`. Re-running resumes where you left off. Use `--reset` to start clean.
+Session IDs are saved in `<workspace>/.agent-coordinator/sessions.json`. Re-running resumes where you left off. Use `--reset` to start clean.
 
 ## Interactive control
 

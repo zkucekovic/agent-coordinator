@@ -1,9 +1,9 @@
 """Unit tests for startup_cli.py — Command, COMMANDS, and StartupCLI."""
 
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-from agent_coordinator.infrastructure.startup_cli import Command, COMMANDS, StartupCLI
+from agent_coordinator.infrastructure.startup_cli import COMMANDS, Command, StartupCLI
 
 
 def make_mock_screen():
@@ -102,10 +102,7 @@ class TestStartupCLIDispatch(unittest.TestCase):
         self.cli._dispatch("/unknown_xyz")
         self.screen._append_content.assert_called()
         call_args = self.screen._append_content.call_args_list
-        warning_shown = any(
-            "Unknown command" in str(call) or "unknown_xyz" in str(call)
-            for call in call_args
-        )
+        warning_shown = any("Unknown command" in str(call) or "unknown_xyz" in str(call) for call in call_args)
         self.assertTrue(warning_shown)
 
     def test_dispatch_alias_q(self):

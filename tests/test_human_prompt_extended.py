@@ -3,9 +3,9 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
-from agent_coordinator.infrastructure.human_prompt import _prompt_tui, _prompt_plain
+from agent_coordinator.infrastructure.human_prompt import _prompt_plain, _prompt_tui
 
 
 def _make_display(side_effects):
@@ -96,12 +96,15 @@ class TestPromptPlain(unittest.TestCase):
         handoff = self.tmp_path / "handoff.md"
         handoff.write_text("important line\n")
         choice_seq = iter(["v", "q"])
-        with patch(
-            "agent_coordinator.infrastructure.enhanced_input.enhanced_choice",
-            side_effect=lambda *a, **kw: next(choice_seq),
-        ), patch(
-            "agent_coordinator.infrastructure.enhanced_input.enhanced_input",
-            return_value="",
+        with (
+            patch(
+                "agent_coordinator.infrastructure.enhanced_input.enhanced_choice",
+                side_effect=lambda *a, **kw: next(choice_seq),
+            ),
+            patch(
+                "agent_coordinator.infrastructure.enhanced_input.enhanced_input",
+                return_value="",
+            ),
         ):
             result = _prompt_plain(handoff, "task-2", "waiting")
         self.assertEqual(result, "quit")
@@ -109,12 +112,15 @@ class TestPromptPlain(unittest.TestCase):
     def test_view_nonexistent_handoff_then_quit(self):
         """'v' on missing file doesn't crash; then 'q' exits."""
         choice_seq = iter(["v", "q"])
-        with patch(
-            "agent_coordinator.infrastructure.enhanced_input.enhanced_choice",
-            side_effect=lambda *a, **kw: next(choice_seq),
-        ), patch(
-            "agent_coordinator.infrastructure.enhanced_input.enhanced_input",
-            return_value="",
+        with (
+            patch(
+                "agent_coordinator.infrastructure.enhanced_input.enhanced_choice",
+                side_effect=lambda *a, **kw: next(choice_seq),
+            ),
+            patch(
+                "agent_coordinator.infrastructure.enhanced_input.enhanced_input",
+                return_value="",
+            ),
         ):
             result = _prompt_plain(self.tmp_path / "missing.md", "task-3", "pending")
         self.assertEqual(result, "quit")
@@ -122,12 +128,15 @@ class TestPromptPlain(unittest.TestCase):
     def test_respond_empty_reloops_then_quit(self):
         """'r' with empty response prints warning and loops; 'q' exits."""
         choice_seq = iter(["r", "q"])
-        with patch(
-            "agent_coordinator.infrastructure.enhanced_input.enhanced_choice",
-            side_effect=lambda *a, **kw: next(choice_seq),
-        ), patch(
-            "builtins.input",
-            return_value="",
+        with (
+            patch(
+                "agent_coordinator.infrastructure.enhanced_input.enhanced_choice",
+                side_effect=lambda *a, **kw: next(choice_seq),
+            ),
+            patch(
+                "builtins.input",
+                return_value="",
+            ),
         ):
             result = _prompt_plain(self.tmp_path / "handoff.md", "task-5", "pending")
         self.assertEqual(result, "quit")
@@ -137,15 +146,19 @@ class TestPromptPlain(unittest.TestCase):
         handoff = self.tmp_path / "handoff.md"
         input_seq = iter(["my response", ""])  # response text, then blank line to finish
         choice_seq = iter(["r"])
-        with patch(
-            "agent_coordinator.infrastructure.enhanced_input.enhanced_choice",
-            side_effect=lambda *a, **kw: next(choice_seq),
-        ), patch(
-            "builtins.input",
-            side_effect=lambda *a: next(input_seq),
-        ), patch(
-            "agent_coordinator.infrastructure.enhanced_input.enhanced_input",
-            return_value="architect",
+        with (
+            patch(
+                "agent_coordinator.infrastructure.enhanced_input.enhanced_choice",
+                side_effect=lambda *a, **kw: next(choice_seq),
+            ),
+            patch(
+                "builtins.input",
+                side_effect=lambda *a: next(input_seq),
+            ),
+            patch(
+                "agent_coordinator.infrastructure.enhanced_input.enhanced_input",
+                return_value="architect",
+            ),
         ):
             result = _prompt_plain(handoff, "task-6", "pending")
         self.assertEqual(result, "continue")

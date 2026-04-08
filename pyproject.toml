@@ -72,11 +72,42 @@ select = [
     "B",      # flake8-bugbear
     "SIM",    # flake8-simplify
     "RUF",    # Ruff-specific rules
+    "C90",    # McCabe cyclomatic complexity
+    "N",      # pep8-naming
+    "A",      # flake8-builtins (shadowing builtins)
+    "T20",    # flake8-print (stray prints)
+    "PT",     # flake8-pytest-style
+    "RET",    # flake8-return
+    "ARG",    # flake8-unused-arguments
+    "PLR",    # Pylint refactor (too many args/branches/etc.)
+    "PLW",    # Pylint warnings
+    "PLE",    # Pylint errors
+    "PERF",   # Perflint (performance anti-patterns)
 ]
 ignore = [
-    "E501",   # line too long — handled by formatter
-    "SIM108", # ternary operator — readability preference
+    "E501",    # line too long — handled by formatter
+    "SIM108",  # ternary operator — readability preference
+    "PT009",   # unittest-style assertions — this project uses unittest.TestCase
+    "PT027",   # unittest-style assertRaises — same reason
+    "T201",    # print() — this is a CLI/TUI tool; print is intentional
+    "PLR2004", # magic values in comparisons — too noisy for test assertions
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "ARG",     # test helpers/mocks often have unused args by design
+    "PLR0915", # test methods can be long
+    "PLR0912", # test methods can have many branches
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
+[tool.ruff.lint.pylint]
+max-args = 10
+max-branches = 15
+max-returns = 8
+max-statements = 60
 
 [tool.ruff.lint.isort]
 known-first-party = ["agent_coordinator"]

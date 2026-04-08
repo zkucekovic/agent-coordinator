@@ -1,5 +1,5 @@
 """Unit tests for agent_coordinator/infrastructure/pty_utils.py"""
-import sys
+
 import unittest
 from pathlib import Path
 
@@ -46,7 +46,7 @@ class TestRunPipe(unittest.TestCase):
             ["echo", "streaming"],
             cwd=Path("/tmp"),
             env=None,
-            on_output=lambda line: collected.append(line),
+            on_output=collected.append,
         )
         self.assertEqual(result.returncode, 0)
         joined = "".join(collected)

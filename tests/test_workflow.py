@@ -1,13 +1,16 @@
 """Tests for src.workflow helper functions."""
 
-import json
 import os
 import tempfile
 import unittest
-from agent_coordinator.models import HandoffStatus, HandoffMessage
+
+from agent_coordinator.models import HandoffMessage, HandoffStatus
 from agent_coordinator.workflow import (
-    get_next_actor, is_plan_complete, is_human_escalation, is_blocked,
+    get_next_actor,
     get_workflow_state,
+    is_blocked,
+    is_human_escalation,
+    is_plan_complete,
 )
 
 VALID_BLOCK_CONTENT = """\
@@ -40,7 +43,6 @@ def _make_msg(status=HandoffStatus.CONTINUE, next_actor="engineer"):
 
 
 class TestGetNextActor(unittest.TestCase):
-
     def test_returns_msg_next(self):
         msg = _make_msg(next_actor="engineer")
         self.assertEqual(get_next_actor(msg), "engineer")
@@ -55,7 +57,6 @@ class TestGetNextActor(unittest.TestCase):
 
 
 class TestIsPlanComplete(unittest.TestCase):
-
     def test_true_for_plan_complete(self):
         msg = _make_msg(status=HandoffStatus.PLAN_COMPLETE)
         self.assertTrue(is_plan_complete(msg))
@@ -70,7 +71,6 @@ class TestIsPlanComplete(unittest.TestCase):
 
 
 class TestIsHumanEscalation(unittest.TestCase):
-
     def test_true_when_next_is_human(self):
         msg = _make_msg(next_actor="human")
         self.assertTrue(is_human_escalation(msg))
@@ -85,7 +85,6 @@ class TestIsHumanEscalation(unittest.TestCase):
 
 
 class TestIsBlocked(unittest.TestCase):
-
     def test_true_for_blocked_status(self):
         msg = _make_msg(status=HandoffStatus.BLOCKED)
         self.assertTrue(is_blocked(msg))
@@ -100,40 +99,35 @@ class TestIsBlocked(unittest.TestCase):
 
 
 class TestGetWorkflowState(unittest.TestCase):
-
     def setUp(self):
         tests_dir = os.path.dirname(os.path.abspath(__file__))
-        self._valid_tf = tempfile.NamedTemporaryFile(
-            mode='w', suffix='.md', delete=False, dir=tests_dir
-        )
-        self._valid_tf.write(VALID_BLOCK_CONTENT)
-        self._valid_tf.flush()
-        self._valid_tf.close()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, dir=tests_dir) as valid_tf:
+            valid_tf.write(VALID_BLOCK_CONTENT)
+            valid_tf.flush()
+        self._valid_tf_name = valid_tf.name
 
-        self._empty_tf = tempfile.NamedTemporaryFile(
-            mode='w', suffix='.md', delete=False, dir=tests_dir
-        )
-        self._empty_tf.write("# no blocks here\n")
-        self._empty_tf.flush()
-        self._empty_tf.close()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, dir=tests_dir) as empty_tf:
+            empty_tf.write("# no blocks here\n")
+            empty_tf.flush()
+        self._empty_tf_name = empty_tf.name
 
     def tearDown(self):
-        os.unlink(self._valid_tf.name)
-        os.unlink(self._empty_tf.name)
+        os.unlink(self._valid_tf_name)
+        os.unlink(self._empty_tf_name)
 
     def test_valid_block_returns_valid_true(self):
-        state = get_workflow_state(self._valid_tf.name)
-        self.assertTrue(state['valid'])
-        self.assertEqual(state['next_actor'], 'engineer')
-        self.assertEqual(state['status'], 'continue')
-        self.assertEqual(state['task_id'], 'task-001')
-        self.assertEqual(state['errors'], [])
+        state = get_workflow_state(self._valid_tf_name)
+        self.assertTrue(state["valid"])
+        self.assertEqual(state["next_actor"], "engineer")
+        self.assertEqual(state["status"], "continue")
+        self.assertEqual(state["task_id"], "task-001")
+        self.assertEqual(state["errors"], [])
 
     def test_no_blocks_returns_valid_false(self):
-        state = get_workflow_state(self._empty_tf.name)
-        self.assertFalse(state['valid'])
-        self.assertTrue(len(state['errors']) > 0)
+        state = get_workflow_state(self._empty_tf_name)
+        self.assertFalse(state["valid"])
+        self.assertTrue(len(state["errors"]) > 0)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

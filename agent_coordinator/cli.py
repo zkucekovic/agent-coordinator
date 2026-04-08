@@ -10,6 +10,7 @@ See README.md for full usage documentation.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import signal
@@ -38,15 +39,23 @@ from agent_coordinator.infrastructure.task_repository import JsonTaskRepository
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 COORDINATOR_DIR = Path(__file__).parent.resolve()
-DEFAULT_WORKSPACE = Path.cwd() / "workspace"
+DEFAULT_WORKSPACE = Path.cwd()
 DEFAULT_MAX_TURNS = 0  # 0 means unlimited
 DEFAULT_HANDOFF_RETRIES = 1
-SESSION_FILE = ".coordinator_sessions.json"
-EVENT_LOG_FILE = "workflow_events.jsonl"
+STATE_DIR = ".agent-coordinator"
+SESSION_FILE = "sessions.json"
+EVENT_LOG_FILE = "events.jsonl"
 AGENTS_FILE = "agents.json"
 
 
-class _QuitSignal(Exception):
+def _state_dir(workspace: Path) -> Path:
+    """Return the coordinator state directory, creating it if needed."""
+    d = workspace / STATE_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+class _QuitSignalError(Exception):
     """Internal signal used to break out of the pause loop and the outer turn loop."""
 
 
@@ -247,7 +256,7 @@ def _file_hash(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _retry_prompt(agent: str, workspace: Path) -> str:
+def _retry_prompt(_agent: str, workspace: Path) -> str:
     """Prompt sent on retry attempts after the agent failed to write a valid handoff."""
     handoff = workspace / "handoff.md"
     snippet = ""
@@ -281,7 +290,7 @@ class InterruptHandler:
     def __exit__(self, *args):
         signal.signal(signal.SIGINT, self.original_handler)
 
-    def _handler(self, signum, frame):
+    def _handler(self, _signum, _frame):
         self.interrupted = True
 
 
@@ -302,7 +311,7 @@ def handle_interrupt(workspace: Path, handoff_path: Path) -> str:
         input("\nPress Enter to continue...")
         return handle_interrupt(workspace, handoff_path)
 
-    elif choice == "e":
+    if choice == "e":
         # Edit handoff directly
         import subprocess
 
@@ -322,7 +331,7 @@ def handle_interrupt(workspace: Path, handoff_path: Path) -> str:
 
         return "c"  # Continue after editing
 
-    elif choice == "m":
+    if choice == "m":
         # Add message using editor
         message = menu.get_message()
         if message:
@@ -331,7 +340,7 @@ def handle_interrupt(workspace: Path, handoff_path: Path) -> str:
             print("Message added to handoff.md")
         return "c"
 
-    elif choice == "u":
+    if choice == "u":
         # TODO: Implement undo
         print("Undo not yet implemented")
         return handle_interrupt(workspace, handoff_path)
@@ -401,7 +410,7 @@ def _show_startup_popup(display, workspace: Path) -> str:
     if choice == "s":
         from agent_coordinator.infrastructure.session_store import SessionStore
 
-        store = SessionStore(workspace / SESSION_FILE)
+        store = SessionStore(_state_dir(workspace) / SESSION_FILE)
         store.clear()
         display._append_content(f"  {display._theme.color_success}✓  Sessions cleared\033[0m")
         display._append_content("")
@@ -412,17 +421,52 @@ def _show_startup_popup(display, workspace: Path) -> str:
     return choice
 
 
-def run_coordinator(
+# ── Coordinator context & helpers ─────────────────────────────────────────────
+
+
+@dataclasses.dataclass
+class _CoordinatorContext:
+    """Shared mutable state threaded through every coordinator helper."""
+
+    workspace: Path
+    state: Path
+    config: dict
+    agents: dict
+    default_backend: str
+    handoff_path: Path
+    handoff_reader: HandoffReader
+    session_store: SessionStore
+    event_log: EventLog
+    router: WorkflowRouter
+    builder: PromptBuilder
+    runner_cache: dict[str, AgentRunner]
+    task_service: TaskService | None
+    display: Any
+    interrupt_menu: Any
+    verbose: bool
+    auto: bool
+    logger: Any
+    turn_counts: dict[str, int] = dataclasses.field(default_factory=dict)
+    total_turns: int = 0
+
+
+def _setup_coordinator(
     workspace: Path,
     max_turns: int,
     reset: bool,
     verbose: bool,
-    output_lines: int = 10,
-    streaming: bool = True,
-    display=None,
-    auto: bool = False,
-) -> None:
-    setup_log(workspace)
+    output_lines: int,
+    streaming: bool,
+    display: Any,
+    auto: bool,
+) -> _CoordinatorContext | None:
+    """Initialise all coordinator state.
+
+    Returns *None* when the user quits from the startup popup (the display is
+    already closed in that case).
+    """
+    state = _state_dir(workspace)
+    setup_log(state)
     logger = get_logger()
     logger.info(
         "run_coordinator start",
@@ -443,8 +487,8 @@ def run_coordinator(
 
     handoff_path = workspace / "handoff.md"
     handoff_reader = HandoffReader(handoff_path)
-    session_store = SessionStore(workspace / SESSION_FILE)
-    event_log = EventLog(workspace / EVENT_LOG_FILE)
+    session_store = SessionStore(_state_dir(workspace) / SESSION_FILE)
+    event_log = EventLog(_state_dir(workspace) / EVENT_LOG_FILE)
     router = WorkflowRouter()
     builder = PromptBuilder(coordinator_dir=COORDINATOR_DIR)
 
@@ -484,9 +528,6 @@ def run_coordinator(
         _create_initial_handoff(workspace)
         print()
 
-    turn_counts: dict[str, int] = {}
-    total_turns = 0
-
     display.start_run(
         agents=list(agents.keys()),
         workspace=str(workspace),
@@ -498,334 +539,443 @@ def run_coordinator(
         action = _show_startup_popup(display, workspace)
         if action == "q":
             display.close()
-            return
+            return None
+
+    return _CoordinatorContext(
+        workspace=workspace,
+        state=state,
+        config=config,
+        agents=agents,
+        default_backend=default_backend,
+        handoff_path=handoff_path,
+        handoff_reader=handoff_reader,
+        session_store=session_store,
+        event_log=event_log,
+        router=router,
+        builder=builder,
+        runner_cache=runner_cache,
+        task_service=task_service,
+        display=display,
+        interrupt_menu=interrupt_menu,
+        verbose=verbose,
+        auto=auto,
+        logger=logger,
+    )
+
+
+def _execute_turn(ctx: _CoordinatorContext) -> str:
+    """Execute one turn of the coordinator loop.
+
+    Returns ``"break"`` to stop the loop, ``"continue"`` to skip to the next
+    iteration, ``"return"`` to exit *run_coordinator* immediately, or ``"ok"``
+    on success.
+    """
+    message = ctx.handoff_reader.read()
+    if message is None:
+        ctx.logger.error("no valid handoff block found in handoff.md")
+        raise RuntimeError("No valid handoff block found — check handoff.md format")
+
+    decision = ctx.router.route(message)
+    status = message.status.value
+
+    if decision.is_terminal:
+        ctx.logger.info("workflow terminal", extra={"ctx": {"reason": decision.stop_reason}})
+        print(f"\n{decision.stop_reason}")
+        return "break"
+
+    agent = decision.next_actor
+
+    if agent == "human":
+        from agent_coordinator.infrastructure.human_prompt import prompt_human_input
+
+        ctx.logger.info("awaiting human input", extra={"ctx": {"task": message.task_id}})
+        action = prompt_human_input(ctx.handoff_path, message.task_id, status, display=ctx.display)
+        if action == "quit":
+            ctx.logger.info("human chose quit")
+            return "break"
+        return "continue"
+
+    if agent not in ctx.agents:
+        ctx.logger.error(
+            "unknown agent in handoff",
+            extra={
+                "ctx": {
+                    "agent": agent,
+                    "known": list(ctx.agents.keys()),
+                }
+            },
+        )
+        raise RuntimeError(f"Unknown agent '{agent}'. Known: {', '.join(ctx.agents.keys())}")
+
+    return _run_agent_turn(ctx, agent, message, status)
+
+
+def _record_turn_result(
+    ctx: _CoordinatorContext,
+    agent: str,
+    message: Any,
+    status: str,
+    t_start: float,
+    output_buffer: list[str],
+    handoff_updated: bool,
+    run_result: Any,
+    prompt_file: Path,
+    prompt_hash: str,
+) -> str:
+    """Verify the handoff update, log the event, and return a loop-control signal."""
+    ctx.turn_counts[agent] = ctx.turn_counts.get(agent, 0) + 1
+    ctx.total_turns += 1
+    duration_seconds = round(time.monotonic() - t_start, 2)
+    response_text = "".join(output_buffer)
+
+    if not handoff_updated:
+        ctx.logger.warning("agent did not update handoff", extra={"ctx": {"agent": agent}})
+        ctx.display.finish_agent_turn(success=False)
+        print(f"\nWARNING: handoff.md not updated by {agent}")
+        return "break"
+
+    new_message = ctx.handoff_reader.read()
+    if new_message is None:
+        ctx.logger.error("invalid handoff block after agent turn", extra={"ctx": {"agent": agent}})
+        ctx.display.finish_agent_turn(success=False)
+        print(f"\nWARNING: Invalid handoff block after {agent}'s turn")
+        return "break"
+
+    new_status = new_message.status.value
+    new_next = new_message.next
+
+    ctx.logger.info(
+        "agent turn done",
+        extra={
+            "ctx": {
+                "agent": agent,
+                "new_status": new_status,
+                "next": new_next,
+            }
+        },
+    )
+    ctx.display.finish_agent_turn(success=True, new_status=new_status, next_agent=new_next)
+
+    _sync_task_status(
+        ctx.task_service,
+        new_message.task_id,
+        new_message.status,
+        ctx.verbose,
+        event_log=ctx.event_log,
+        turn=ctx.total_turns,
+        agent=agent,
+    )
+
+    ctx.event_log.append(
+        turn=ctx.total_turns,
+        agent=agent,
+        task_id=message.task_id,
+        status_before=status,
+        status_after=new_status,
+        session_id=run_result.session_id,
+        response_text=response_text[:50_000],
+        prompt_file=str(prompt_file.relative_to(ctx.state)),
+        prompt_hash=prompt_hash,
+        duration_seconds=duration_seconds,
+    )
+    del response_text  # free the potentially large string
+
+    time.sleep(1)
+    return "ok"
+
+
+def _run_agent_turn(ctx: _CoordinatorContext, agent: str, message: Any, status: str) -> str:
+    """Dispatch a single agent turn and record results.
+
+    Returns ``"break"``, ``"return"``, or ``"ok"``.
+    """
+    agent_cfg = ctx.agents[agent]
+    if agent not in ctx.runner_cache:
+        r = create_runner_for_agent(agent_cfg, ctx.default_backend, ctx.verbose)
+        from agent_coordinator.infrastructure.manual_runner import ManualRunner
+
+        if isinstance(r, ManualRunner) and hasattr(ctx.display, "read_input"):
+            r._input_fn = ctx.display.read_input
+        ctx.runner_cache[agent] = r
+    runner = ctx.runner_cache[agent]
+    backend_name = agent_cfg.get("backend", ctx.default_backend)
+
+    next_task = ctx.task_service.next_ready_task() if ctx.task_service else None
+    first_turn = ctx.session_store.get(agent) is None
+    prompt = ctx.builder.build(agent, ctx.workspace, ctx.handoff_reader.read_raw(), agent_cfg, next_task, first_turn)
+
+    # ── Prompt persistence (1.2) ──────────────────────────────────────
+    turn_num = ctx.total_turns + 1
+    prompts_log_dir = ctx.state / "prompts_log"
+    prompts_log_dir.mkdir(exist_ok=True)
+    prompt_file = prompts_log_dir / f"turn-{turn_num:03d}-{agent}.md"
+    prompt_file.write_text(prompt, encoding="utf-8")
+    prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+
+    ctx.logger.info(
+        "agent turn start",
+        extra={
+            "ctx": {
+                "agent": agent,
+                "backend": backend_name,
+                "task": message.task_id,
+                "status": status,
+                "turn": ctx.total_turns + 1,
+            }
+        },
+    )
+    ctx.display.start_agent_turn(agent, backend_name, message.task_id, status)
+
+    hash_before = _file_hash(ctx.handoff_path)
+    handoff_updated = False
+
+    # ── Output capture (1.1) and timing (1.3) ────────────────────────
+    output_buffer: list[str] = []
+
+    def _on_output(chunk: str, _buf: list[str] = output_buffer) -> None:
+        _buf.append(chunk)
+        if ctx.verbose:
+            ctx.display.update_output(chunk)
+
+    t_start = time.monotonic()
+    run_result = None
+    for attempt in range(1 + DEFAULT_HANDOFF_RETRIES):
+        try:
+            run_result = runner.run(
+                message=prompt if attempt == 0 else _retry_prompt(agent, ctx.workspace),
+                workspace=ctx.workspace,
+                session_id=ctx.session_store.get(agent),
+                model=agent_cfg.get("model"),
+                on_output=_on_output,
+            )
+        except RuntimeError as e:
+            ctx.logger.error(
+                "backend error",
+                extra={
+                    "ctx": {
+                        "agent": agent,
+                        "attempt": attempt,
+                        "error": str(e),
+                    }
+                },
+            )
+            ctx.display.finish_agent_turn(success=False)
+            choice = _show_backend_error(ctx.display, e, ctx.workspace)
+            if choice == "e":
+                # Reload agents after editing
+                ctx.config = load_config(ctx.workspace)
+                ctx.agents = load_agent_config(ctx.config)
+                ctx.runner_cache.clear()
+            if choice == "q":
+                return "return"
+            # retry or reloaded config — break out of attempt loop and re-run the turn
+            break
+
+        ctx.session_store.set(agent, run_result.session_id)
+        hash_after = _file_hash(ctx.handoff_path)
+
+        if hash_after != hash_before:
+            handoff_updated = True
+            break
+
+        if attempt < DEFAULT_HANDOFF_RETRIES:
+            ctx.logger.warning(
+                "handoff not updated, retrying",
+                extra={
+                    "ctx": {
+                        "agent": agent,
+                        "attempt": attempt + 1,
+                    }
+                },
+            )
+            print(f"handoff.md not updated - retrying ({attempt + 1}/{DEFAULT_HANDOFF_RETRIES})")
+
+    return _record_turn_result(
+        ctx,
+        agent,
+        message,
+        status,
+        t_start,
+        output_buffer,
+        handoff_updated,
+        run_result,
+        prompt_file,
+        prompt_hash,
+    )
+
+
+def _handle_interrupt(ctx: _CoordinatorContext) -> str:
+    """Handle a KeyboardInterrupt.  Returns ``"quit"`` or ``"continue"``."""
+    ctx.logger.info("KeyboardInterrupt — showing interrupt menu")
+    choice = None
+    while True:
+        choice = ctx.interrupt_menu.show()
+        if choice == "q":
+            ctx.logger.info("user quit via interrupt menu")
+            break
+        if choice in ("c", "r"):
+            break
+        if choice == "t":
+            _handle_pause(ctx)
+            break
+        if not _handle_interrupt_action(choice, ctx):
+            break  # unknown choice — continue execution
+    return "quit" if choice == "q" else "continue"
+
+
+def _handle_pause(ctx: _CoordinatorContext) -> None:
+    """Enter pause mode until the user resumes or quits."""
+    ctx.logger.info("user paused execution")
+    ctx.display.set_paused(True)
+    ctx.display._append_content(
+        f"  {ctx.display._theme.color_warning}⏸  Execution paused — Ctrl+C to resume or quit\033[0m"
+    )
+    try:
+        while True:
+            try:
+                time.sleep(0.5)
+            except KeyboardInterrupt:  # noqa: PERF203
+                resume_choice = ctx.interrupt_menu.show()
+                if resume_choice == "q":
+                    ctx.display.set_paused(False)
+                    ctx.logger.info("user quit from paused state")
+                    raise _QuitSignalError() from None
+                if resume_choice == "c":
+                    break
+                _handle_pause_action(resume_choice, ctx)
+    except _QuitSignalError:
+        return
+    ctx.display.set_paused(False)
+    ctx.display._append_content(f"  {ctx.display._theme.color_success}▶  Execution resumed\033[0m")
+    ctx.logger.info("user resumed execution")
+
+
+def _handle_pause_action(resume_choice: str, ctx: _CoordinatorContext) -> None:
+    """Handle a non-flow-control action during pause."""
+    if resume_choice == "e":
+        if hasattr(ctx.display, "with_editor"):
+            ctx.display.with_editor(ctx.workspace / "handoff.md")
+    elif resume_choice == "i":
+        hp = ctx.workspace / "handoff.md"
+        if hp.exists():
+            for ln in hp.read_text().splitlines()[-30:]:
+                ctx.display._append_content("  " + ln)
+    elif resume_choice == "m":
+        user_msg = ctx.interrupt_menu.get_message()
+        if user_msg:
+            with open(ctx.workspace / "handoff.md", "a") as _f:
+                _f.write(f"\n\n<!-- Human intervention: {user_msg} -->\n")
+    elif resume_choice in ("n", "s", "l", "w", "x"):
+        _handle_popup_command(resume_choice, ctx.workspace, ctx.display)
+
+
+def _handle_interrupt_action(choice: str, ctx: _CoordinatorContext) -> bool:
+    """Handle a non-flow-control interrupt menu action.
+
+    Returns ``True`` if the action was recognised (menu should re-show),
+    ``False`` for an unknown choice (caller should break).
+    """
+    if choice in ("n", "s", "l", "w", "x"):
+        _handle_popup_command(choice, ctx.workspace, ctx.display)
+        return True
+    if choice == "m":
+        user_msg = ctx.interrupt_menu.get_message()
+        if user_msg:
+            with open(ctx.workspace / "handoff.md", "a") as _f:
+                _f.write(f"\n\n<!-- Human intervention: {user_msg} -->\n")
+        return True
+    if choice == "e":
+        if hasattr(ctx.display, "with_editor"):
+            ctx.display.with_editor(ctx.workspace / "handoff.md")
+        else:
+            import subprocess as _sp
+
+            from agent_coordinator.infrastructure.editor import get_editor
+
+            try:
+                _sp.run([get_editor(), str(ctx.workspace / "handoff.md")], check=True)
+            except Exception as _e:
+                ctx.display._append_content(f"  Editor error: {_e}")
+        return True
+    if choice == "i":
+        hp = ctx.workspace / "handoff.md"
+        if hp.exists():
+            for ln in hp.read_text().splitlines()[-30:]:
+                ctx.display._append_content("  " + ln)
+        return True
+    return False
+
+
+def _handle_crash(display: Any, workspace: Path, exc: Exception) -> None:
+    """Handle an unhandled exception in the coordinator loop."""
+    log_crash(exc, context="coordinator loop")
+    from agent_coordinator.infrastructure.diagnostic_log import log_path as _lp
+
+    lp = _lp()
+    try:
+        from agent_coordinator.infrastructure.tui import _classify_error
+
+        title, friendly = _classify_error(exc)
+        if lp:
+            friendly += f"\n\nLog: {lp}"
+        while True:
+            err_choice = display.show_error_dialog(
+                title,
+                friendly,
+                [("e", "Edit handoff.md"), ("i", "Inspect handoff.md"), ("q", "Quit")],
+            )
+            if err_choice == "e":
+                if hasattr(display, "with_editor"):
+                    display.with_editor(workspace / "handoff.md")
+                continue
+            if err_choice == "i":
+                hp = workspace / "handoff.md"
+                if hp.exists():
+                    for ln in hp.read_text().splitlines()[-30:]:
+                        display._append_content("  " + ln)
+                continue
+            break
+    except Exception:
+        pass
+    sys.exit(1)
+
+
+def run_coordinator(
+    workspace: Path,
+    max_turns: int,
+    reset: bool,
+    verbose: bool,
+    output_lines: int = 10,
+    streaming: bool = True,
+    display=None,
+    auto: bool = False,
+) -> None:
+    ctx = _setup_coordinator(workspace, max_turns, reset, verbose, output_lines, streaming, display, auto)
+    if ctx is None:
+        return
 
     try:
-        while max_turns == 0 or total_turns < max_turns:
+        while max_turns == 0 or ctx.total_turns < max_turns:
             try:
-                message = handoff_reader.read()
-                if message is None:
-                    logger.error("no valid handoff block found in handoff.md")
-                    raise RuntimeError("No valid handoff block found — check handoff.md format")
-
-                decision = router.route(message)
-                status = message.status.value
-
-                if decision.is_terminal:
-                    logger.info("workflow terminal", extra={"ctx": {"reason": decision.stop_reason}})
-                    print(f"\n{decision.stop_reason}")
+                result = _execute_turn(ctx)
+                if result == "break":
                     break
-
-                agent = decision.next_actor
-
-                if agent == "human":
-                    from agent_coordinator.infrastructure.human_prompt import prompt_human_input
-
-                    logger.info("awaiting human input", extra={"ctx": {"task": message.task_id}})
-                    action = prompt_human_input(handoff_path, message.task_id, status, display=display)
-                    if action == "quit":
-                        logger.info("human chose quit")
-                        break
-                    continue
-
-                if agent not in agents:
-                    logger.error(
-                        "unknown agent in handoff",
-                        extra={
-                            "ctx": {
-                                "agent": agent,
-                                "known": list(agents.keys()),
-                            }
-                        },
-                    )
-                    raise RuntimeError(f"Unknown agent '{agent}'. Known: {', '.join(agents.keys())}")
-
-                agent_cfg = agents[agent]
-                if agent not in runner_cache:
-                    r = create_runner_for_agent(agent_cfg, default_backend, verbose)
-                    from agent_coordinator.infrastructure.manual_runner import ManualRunner
-
-                    if isinstance(r, ManualRunner) and hasattr(display, "read_input"):
-                        r._input_fn = display.read_input
-                    runner_cache[agent] = r
-                runner = runner_cache[agent]
-                backend_name = agent_cfg.get("backend", default_backend)
-
-                next_task = task_service.next_ready_task() if task_service else None
-                first_turn = session_store.get(agent) is None
-                prompt = builder.build(agent, workspace, handoff_reader.read_raw(), agent_cfg, next_task, first_turn)
-
-                # ── Prompt persistence (1.2) ──────────────────────────────
-                turn_num = total_turns + 1
-                prompts_log_dir = workspace / "prompts_log"
-                prompts_log_dir.mkdir(exist_ok=True)
-                prompt_file_rel = f"prompts_log/turn-{turn_num:03d}-{agent}.md"
-                (workspace / prompt_file_rel).write_text(prompt, encoding="utf-8")
-                prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
-
-                logger.info(
-                    "agent turn start",
-                    extra={
-                        "ctx": {
-                            "agent": agent,
-                            "backend": backend_name,
-                            "task": message.task_id,
-                            "status": status,
-                            "turn": total_turns + 1,
-                        }
-                    },
-                )
-                display.start_agent_turn(agent, backend_name, message.task_id, status)
-
-                hash_before = _file_hash(handoff_path)
-                handoff_updated = False
-
-                # ── Output capture (1.1) and timing (1.3) ────────────────
-                output_buffer: list[str] = []
-
-                def _on_output(chunk: str, _buf: list[str] = output_buffer) -> None:
-                    _buf.append(chunk)
-                    if verbose:
-                        display.update_output(chunk)
-
-                t_start = time.monotonic()
-                for attempt in range(1 + DEFAULT_HANDOFF_RETRIES):
-                    try:
-                        run_result = runner.run(
-                            message=prompt if attempt == 0 else _retry_prompt(agent, workspace),
-                            workspace=workspace,
-                            session_id=session_store.get(agent),
-                            model=agent_cfg.get("model"),
-                            on_output=_on_output,
-                        )
-                    except RuntimeError as e:
-                        logger.error(
-                            "backend error",
-                            extra={
-                                "ctx": {
-                                    "agent": agent,
-                                    "attempt": attempt,
-                                    "error": str(e),
-                                }
-                            },
-                        )
-                        display.finish_agent_turn(success=False)
-                        choice = _show_backend_error(display, e, workspace)
-                        if choice == "e":
-                            # Reload agents after editing
-                            config = load_config(workspace)
-                            agents = load_agent_config(config)
-                            runner_cache.clear()
-                        if choice == "q":
-                            return
-                        # retry or reloaded config — break out of attempt loop and re-run the turn
-                        break
-
-                    session_store.set(agent, run_result.session_id)
-                    hash_after = _file_hash(handoff_path)
-
-                    if hash_after != hash_before:
-                        handoff_updated = True
-                        break
-
-                    if attempt < DEFAULT_HANDOFF_RETRIES:
-                        logger.warning(
-                            "handoff not updated, retrying",
-                            extra={
-                                "ctx": {
-                                    "agent": agent,
-                                    "attempt": attempt + 1,
-                                }
-                            },
-                        )
-                        print(f"handoff.md not updated - retrying ({attempt + 1}/{DEFAULT_HANDOFF_RETRIES})")
-
-                turn_counts[agent] = turn_counts.get(agent, 0) + 1
-                total_turns += 1
-                duration_seconds = round(time.monotonic() - t_start, 2)
-                response_text = "".join(output_buffer)
-                del output_buffer  # free the list early
-
-                if not handoff_updated:
-                    logger.warning("agent did not update handoff", extra={"ctx": {"agent": agent}})
-                    display.finish_agent_turn(success=False)
-                    print(f"\nWARNING: handoff.md not updated by {agent}")
-                    break
-
-                new_message = handoff_reader.read()
-                if new_message is None:
-                    logger.error("invalid handoff block after agent turn", extra={"ctx": {"agent": agent}})
-                    display.finish_agent_turn(success=False)
-                    print(f"\nWARNING: Invalid handoff block after {agent}'s turn")
-                    break
-
-                new_status = new_message.status.value
-                new_next = new_message.next
-
-                logger.info(
-                    "agent turn done",
-                    extra={
-                        "ctx": {
-                            "agent": agent,
-                            "new_status": new_status,
-                            "next": new_next,
-                        }
-                    },
-                )
-                display.finish_agent_turn(success=True, new_status=new_status, next_agent=new_next)
-
-                _sync_task_status(
-                    task_service,
-                    new_message.task_id,
-                    new_message.status,
-                    verbose,
-                    event_log=event_log,
-                    turn=total_turns,
-                    agent=agent,
-                )
-
-                event_log.append(
-                    turn=total_turns,
-                    agent=agent,
-                    task_id=message.task_id,
-                    status_before=status,
-                    status_after=new_status,
-                    session_id=run_result.session_id,
-                    response_text=response_text[:50_000],
-                    prompt_file=prompt_file_rel,
-                    prompt_hash=prompt_hash,
-                    duration_seconds=duration_seconds,
-                )
-                del response_text  # free the potentially large string
-
-                time.sleep(1)
-
+                if result == "return":
+                    return
             except KeyboardInterrupt:
-                logger.info("KeyboardInterrupt — showing interrupt menu")
-                while True:
-                    choice = interrupt_menu.show()
-                    if choice == "q":
-                        logger.info("user quit via interrupt menu")
-                        break
-                    elif choice == "c":
-                        break  # continue execution
-                    elif choice == "r":
-                        break  # retry — falls through to next iteration
-                    elif choice == "t":
-                        # Pause after this turn — enter wait loop
-                        logger.info("user paused execution")
-                        display.set_paused(True)
-                        display._append_content(
-                            f"  {display._theme.color_warning}⏸  Execution paused — Ctrl+C to resume or quit\033[0m"
-                        )
-                        try:
-                            while True:
-                                try:
-                                    time.sleep(0.5)
-                                except KeyboardInterrupt:
-                                    resume_choice = interrupt_menu.show()
-                                    if resume_choice == "q":
-                                        display.set_paused(False)
-                                        logger.info("user quit from paused state")
-                                        raise _QuitSignal() from None
-                                    elif resume_choice == "c":
-                                        break
-                                    elif resume_choice == "e":
-                                        if hasattr(display, "with_editor"):
-                                            display.with_editor(workspace / "handoff.md")
-                                    elif resume_choice == "i":
-                                        hp = workspace / "handoff.md"
-                                        if hp.exists():
-                                            for ln in hp.read_text().splitlines()[-30:]:
-                                                display._append_content("  " + ln)
-                                    elif resume_choice == "m":
-                                        user_msg = interrupt_menu.get_message()
-                                        if user_msg:
-                                            with open(workspace / "handoff.md", "a") as _f:
-                                                _f.write(f"\n\n<!-- Human intervention: {user_msg} -->\n")
-                                    elif resume_choice in ("n", "s", "l", "w", "x"):
-                                        _handle_popup_command(resume_choice, workspace, display)
-                                    # anything else: stay paused
-                        except _QuitSignal:
-                            break
-                        display.set_paused(False)
-                        display._append_content(f"  {display._theme.color_success}▶  Execution resumed\033[0m")
-                        logger.info("user resumed execution")
-                        break  # resume execution
-                    elif choice in ("n", "s", "l", "w", "x"):
-                        _handle_popup_command(choice, workspace, display)
-                        # re-show menu after slash command
-                    elif choice == "m":
-                        user_msg = interrupt_menu.get_message()
-                        if user_msg:
-                            with open(workspace / "handoff.md", "a") as _f:
-                                _f.write(f"\n\n<!-- Human intervention: {user_msg} -->\n")
-                        # re-show menu
-                    elif choice == "e":
-                        if hasattr(display, "with_editor"):
-                            display.with_editor(workspace / "handoff.md")
-                        else:
-                            import subprocess as _sp
-
-                            from agent_coordinator.infrastructure.editor import get_editor
-
-                            try:
-                                _sp.run([get_editor(), str(workspace / "handoff.md")], check=True)
-                            except Exception as _e:
-                                display._append_content(f"  Editor error: {_e}")
-                        # re-show menu
-                    elif choice == "i":
-                        hp = workspace / "handoff.md"
-                        if hp.exists():
-                            for ln in hp.read_text().splitlines()[-30:]:
-                                display._append_content("  " + ln)
-                        # re-show menu
-                    else:
-                        break  # unknown choice — continue execution
-
-                if choice == "q":
+                if _handle_interrupt(ctx) == "quit":
                     break
-
         else:
-            logger.info("max turns reached", extra={"ctx": {"max_turns": max_turns}})
+            ctx.logger.info("max turns reached", extra={"ctx": {"max_turns": max_turns}})
             print(f"\nReached max turns ({max_turns})")
 
     except Exception as exc:
-        log_crash(exc, context="coordinator loop")
-        from agent_coordinator.infrastructure.diagnostic_log import log_path as _lp
-
-        lp = _lp()
-        try:
-            from agent_coordinator.infrastructure.tui import _classify_error
-
-            title, friendly = _classify_error(exc)
-            if lp:
-                friendly += f"\n\nLog: {lp}"
-            while True:
-                err_choice = display.show_error_dialog(
-                    title,
-                    friendly,
-                    [("e", "Edit handoff.md"), ("i", "Inspect handoff.md"), ("q", "Quit")],
-                )
-                if err_choice == "e":
-                    if hasattr(display, "with_editor"):
-                        display.with_editor(workspace / "handoff.md")
-                    continue
-                if err_choice == "i":
-                    hp = workspace / "handoff.md"
-                    if hp.exists():
-                        for ln in hp.read_text().splitlines()[-30:]:
-                            display._append_content("  " + ln)
-                    continue
-                break
-        except Exception:
-            pass
-        sys.exit(1)
+        _handle_crash(ctx.display, ctx.workspace, exc)
     finally:
-        display.close()
-        logger.info("=== session end ===", extra={"ctx": {"total_turns": total_turns}})
+        ctx.display.close()
+        ctx.logger.info("=== session end ===", extra={"ctx": {"total_turns": ctx.total_turns}})
 
-    _print_summary(total_turns, turn_counts)
+    _print_summary(ctx.total_turns, ctx.turn_counts)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -919,71 +1069,94 @@ BLOCKERS:
     print(f"Created initial handoff.md in {workspace}")
 
 
-def _execute_startup_action(action: dict, args: argparse.Namespace) -> None:
-    """Execute an action returned by StartupCLI.run()."""
-    kind = action["action"]
+def _do_startup_init(action: dict, _args: argparse.Namespace) -> None:
     workspace = action.get("workspace", Path(DEFAULT_WORKSPACE).resolve())
-    screen = action.get("screen")  # may be None for non-TUI paths
+    screen = action.get("screen")
+    workspace.mkdir(parents=True, exist_ok=True)
+    _create_initial_handoff(workspace)
+    if screen:
+        t = screen._theme
+        screen._append_content(f"  {t.color_success}✓  Workspace initialised: {workspace}\033[0m")
+        screen._append_content(f"  {t.text_dim}Run /run {workspace} to start\033[0m")
+    else:
+        print(f"\n  Workspace initialised: {workspace}")
+        print(f"  Run:  agent-coordinator --workspace {workspace}\n")
 
-    if kind == "init":
-        workspace.mkdir(parents=True, exist_ok=True)
-        _create_initial_handoff(workspace)
-        if screen:
-            t = screen._theme
-            screen._append_content(f"  {t.color_success}✓  Workspace initialised: {workspace}\033[0m")
-            screen._append_content(f"  {t.text_dim}Run /run {workspace} to start\033[0m")
-        else:
-            print(f"\n  Workspace initialised: {workspace}")
-            print(f"  Run:  agent-coordinator --workspace {workspace}\n")
 
-    elif kind == "import":
-        from agent_coordinator.helpers.import_plan import import_document
+def _do_startup_import(action: dict, args: argparse.Namespace) -> None:
+    from agent_coordinator.helpers.import_plan import import_document
 
-        source = action["file"]
-        if screen:
-            t = screen._theme
-            screen._append_content(f"  {t.text_dim}Importing: {source}\033[0m")
-            screen._append_content(f"  {t.text_dim}Workspace: {workspace}\033[0m")
-        else:
-            print(f"\n  Importing: {source}")
-            print(f"  Workspace: {workspace}\n")
-        import_document(
-            source_path=source,
-            workspace=workspace,
-            doc_type=action.get("type"),
-            force=action.get("force", False),
-            no_handoff=False,
-            no_tasks=False,
-            verbose=not bool(screen),
-        )
-        # After import ask if user wants to run immediately
-        if screen:
-            answer = screen.read_input("Run coordinator now? [Y/n] ")
-        else:
-            try:
-                answer = input("  Run coordinator now? [Y/n] ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                answer = "n"
-        if answer.lower() in ("", "y", "yes"):
-            _run_from_workspace(workspace, args, display=screen)
-
-    elif kind == "run":
+    workspace = action.get("workspace", Path(DEFAULT_WORKSPACE).resolve())
+    screen = action.get("screen")
+    source = action["file"]
+    if screen:
+        t = screen._theme
+        screen._append_content(f"  {t.text_dim}Importing: {source}\033[0m")
+        screen._append_content(f"  {t.text_dim}Workspace: {workspace}\033[0m")
+    else:
+        print(f"\n  Importing: {source}")
+        print(f"  Workspace: {workspace}\n")
+    import_document(
+        source_path=source,
+        workspace=workspace,
+        doc_type=action.get("type"),
+        force=action.get("force", False),
+        no_handoff=False,
+        no_tasks=False,
+        verbose=not bool(screen),
+    )
+    # After import ask if user wants to run immediately
+    if screen:
+        answer = screen.read_input("Run coordinator now? [Y/n] ")
+    else:
+        try:
+            answer = input("  Run coordinator now? [Y/n] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = "n"
+    if answer.lower() in ("", "y", "yes"):
         _run_from_workspace(workspace, args, display=screen)
 
-    elif kind == "reset":
-        from agent_coordinator.infrastructure.session_store import SessionStore
 
-        store = SessionStore(workspace / SESSION_FILE)
-        store.clear()
-        if screen:
-            t = screen._theme
-            screen._append_content(f"  {t.color_success}✓  Session state cleared for: {workspace}\033[0m")
-        else:
-            print(f"\n  Session state cleared for: {workspace}\n")
+def _do_startup_run(action: dict, args: argparse.Namespace) -> None:
+    workspace = action.get("workspace", Path(DEFAULT_WORKSPACE).resolve())
+    screen = action.get("screen")
+    _run_from_workspace(workspace, args, display=screen)
 
-    elif kind == "quit":
-        if screen and screen._active:
-            screen.close()
+
+def _do_startup_reset(action: dict, _args: argparse.Namespace) -> None:
+    from agent_coordinator.infrastructure.session_store import SessionStore
+
+    workspace = action.get("workspace", Path(DEFAULT_WORKSPACE).resolve())
+    screen = action.get("screen")
+    store = SessionStore(_state_dir(workspace) / SESSION_FILE)
+    store.clear()
+    if screen:
+        t = screen._theme
+        screen._append_content(f"  {t.color_success}✓  Session state cleared for: {workspace}\033[0m")
+    else:
+        print(f"\n  Session state cleared for: {workspace}\n")
+
+
+def _do_startup_quit(action: dict, _args: argparse.Namespace) -> None:
+    screen = action.get("screen")
+    if screen and screen._active:
+        screen.close()
+
+
+_STARTUP_DISPATCH: dict[str, Callable] = {
+    "init": _do_startup_init,
+    "import": _do_startup_import,
+    "run": _do_startup_run,
+    "reset": _do_startup_reset,
+    "quit": _do_startup_quit,
+}
+
+
+def _execute_startup_action(action: dict, args: argparse.Namespace) -> None:
+    """Execute an action returned by StartupCLI.run()."""
+    handler = _STARTUP_DISPATCH.get(action["action"])
+    if handler:
+        handler(action, args)
 
 
 def _handle_popup_command(key: str, workspace: Path, display) -> None:
@@ -1030,7 +1203,7 @@ def _handle_popup_command(key: str, workspace: Path, display) -> None:
     elif key == "x":  # /reset
         from agent_coordinator.infrastructure.session_store import SessionStore
 
-        store = SessionStore(workspace / SESSION_FILE)
+        store = SessionStore(_state_dir(workspace) / SESSION_FILE)
         store.clear()
         _info(f"Session state cleared for: {workspace}")
 

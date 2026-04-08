@@ -1,6 +1,6 @@
 """Diagnostic logger for agent-coordinator.
 
-Writes structured log entries to {workspace}/coordinator-debug.log.
+Writes structured log entries to {state_dir}/debug.log.
 Each entry is a single line: ISO timestamp | LEVEL | message (+ optional JSON context).
 
 The log is always written even when the TUI is in alternate-screen mode —
@@ -16,7 +16,7 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
-_LOG_FILENAME = ".coordinator-debug.log"
+_LOG_FILENAME = "debug.log"
 
 # Module-level logger so any file can do:
 #   from agent_coordinator.infrastructure.diagnostic_log import get_logger
@@ -49,11 +49,12 @@ class _OneLineFormatter(logging.Formatter):
         return f"{ts} | {level} | {msg}{ctx_str}{exc_str}"
 
 
-def setup(workspace: Path) -> Path:
+def setup(state_dir: Path) -> Path:
     """Initialise the file logger for this run. Call once from main()."""
-    global _logger, _log_path
+    global _logger, _log_path  # noqa: PLW0603
 
-    log_path = workspace / _LOG_FILENAME
+    state_dir.mkdir(parents=True, exist_ok=True)
+    log_path = state_dir / _LOG_FILENAME
     _log_path = log_path
 
     handler = logging.FileHandler(log_path, encoding="utf-8")

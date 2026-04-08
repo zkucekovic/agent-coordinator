@@ -3,11 +3,11 @@
 The existing tests/test_pty_utils.py covers basic _strip, PtyResult attributes,
 and the _run_pipe path.  This file adds wider coverage.
 """
+
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -18,8 +18,8 @@ from agent_coordinator.infrastructure.pty_utils import (
     run_with_pty,
 )
 
-
 # ── _strip: comprehensive ANSI stripping ──────────────────────────────────────
+
 
 class TestStrip:
     def test_plain_text_unchanged(self):
@@ -63,6 +63,7 @@ class TestStrip:
 
 # ── PtyResult ─────────────────────────────────────────────────────────────────
 
+
 class TestPtyResult:
     def test_constructor_stores_fields(self):
         r = PtyResult(returncode=0, stdout="out", stderr="err")
@@ -92,6 +93,7 @@ class TestPtyResult:
 
 # ── _run_pipe: extended coverage ──────────────────────────────────────────────
 
+
 class TestRunPipeExtended:
     def test_cwd_passed_to_subprocess(self, tmp_path):
         result = _run_pipe(["pwd"], cwd=tmp_path, env=None, on_output=None)
@@ -100,6 +102,7 @@ class TestRunPipeExtended:
 
     def test_env_is_forwarded(self, tmp_path):
         import os
+
         env = {**os.environ, "MY_TEST_VAR": "hello_env"}
         result = _run_pipe(
             ["env"],
@@ -132,12 +135,12 @@ class TestRunPipeExtended:
         assert "c" in joined
 
     def test_on_output_stderr_captured_separately(self, tmp_path):
-        stderr_lines: list[str] = []
+        _stderr_lines: list[str] = []
         result = _run_pipe(
             ["sh", "-c", "echo stdout_line; echo stderr_line >&2"],
             cwd=tmp_path,
             env=None,
-            on_output=lambda l: None,
+            on_output=lambda line: None,
         )
         assert "stderr_line" in result.stderr
 
@@ -167,11 +170,12 @@ class TestRunPipeExtended:
             env=None,
             on_output=lines.append,
         )
-        assert any("first" in l for l in lines)
-        assert any("second" in l for l in lines)
+        assert any("first" in line for line in lines)
+        assert any("second" in line for line in lines)
 
 
 # ── run_with_pty: pipe fallback ───────────────────────────────────────────────
+
 
 class TestRunWithPty:
     def test_pipe_path_used_when_stdin_not_tty(self):
@@ -183,6 +187,7 @@ class TestRunWithPty:
     def test_pipe_path_used_when_has_pty_false(self):
         """Explicitly simulate a platform without pty."""
         import agent_coordinator.infrastructure.pty_utils as pu
+
         with patch.object(pu, "_HAS_PTY", False):
             result = run_with_pty(["echo", "no-pty"])
         assert "no-pty" in result.stdout
@@ -193,10 +198,11 @@ class TestRunWithPty:
             ["echo", "streamed"],
             on_output=collected.append,
         )
-        assert any("streamed" in l for l in collected)
+        assert any("streamed" in line for line in collected)
 
 
 # ── PTY path: skipped (requires real TTY) ─────────────────────────────────────
+
 
 @pytest.mark.skipif(True, reason="requires real TTY - integration test only")
 def test_pty_path_requires_tty():

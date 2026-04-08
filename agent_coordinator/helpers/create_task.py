@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 
-def create_task_interactive(workspace: Path, use_editor: bool = True) -> dict[str, Any]:
+def create_task_interactive(_workspace: Path, use_editor: bool = True) -> dict[str, Any]:
     """Interactively create a task."""
     from datetime import datetime, timezone
 
@@ -36,7 +36,7 @@ def create_task_interactive(workspace: Path, use_editor: bool = True) -> dict[st
             print("ERROR: Task ID and title are required")
             sys.exit(1)
 
-        task = {
+        return {
             "id": task_data["id"],
             "title": task_data["title"],
             "description": task_data["description"],
@@ -47,8 +47,6 @@ def create_task_interactive(workspace: Path, use_editor: bool = True) -> dict[st
             "created_at": timestamp,
             "updated_at": timestamp,
         }
-
-        return task
 
     # Fallback to enhanced interactive method
     from agent_coordinator.infrastructure.enhanced_input import Colors, enhanced_input
@@ -83,7 +81,7 @@ def create_task_interactive(workspace: Path, use_editor: bool = True) -> dict[st
             break
         dependencies.append(line)
 
-    task = {
+    return {
         "id": task_id,
         "title": title,
         "description": description,
@@ -94,8 +92,6 @@ def create_task_interactive(workspace: Path, use_editor: bool = True) -> dict[st
         "created_at": timestamp,
         "updated_at": timestamp,
     }
-
-    return task
 
 
 def add_task_to_file(workspace: Path, task: dict[str, Any]) -> None:
@@ -123,7 +119,7 @@ def add_task_to_file(workspace: Path, task: dict[str, Any]) -> None:
     print(f"\nSUCCESS:  Task '{task['id']}' added to {tasks_file}")
 
 
-def create_specification_interactive(workspace: Path, use_editor: bool = True) -> str:
+def create_specification_interactive(_workspace: Path, use_editor: bool = True) -> str:
     """Interactively create a specification."""
     if use_editor:
         from agent_coordinator.infrastructure.editor import edit_specification

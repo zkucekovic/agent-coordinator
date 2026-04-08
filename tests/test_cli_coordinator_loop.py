@@ -1,10 +1,11 @@
 """Unit tests for run_coordinator in agent_coordinator/cli.py."""
+
 import json
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 from agent_coordinator.domain.models import RunResult
 
@@ -40,12 +41,14 @@ _HANDOFF_CONTINUE = textwrap.dedent("""\
     ---END---
 """)
 
-_AGENTS_JSON = json.dumps({
-    "default_backend": "copilot",
-    "agents": {
-        "architect": {"prompt_file": "prompts/architect.md"},
-    },
-})
+_AGENTS_JSON = json.dumps(
+    {
+        "default_backend": "copilot",
+        "agents": {
+            "architect": {"prompt_file": "prompts/architect.md"},
+        },
+    }
+)
 
 
 def _make_workspace(handoff_content: str = _HANDOFF_PLAN_COMPLETE) -> Path:
@@ -71,6 +74,7 @@ def _mock_display() -> MagicMock:
 
 # ── Common patches applied to all tests ───────────────────────────────────────
 
+
 def _common_patches():
     """Return context managers that suppress I/O & logging side-effects."""
     return [
@@ -86,6 +90,7 @@ def _common_patches():
 
 # ── Test cases ─────────────────────────────────────────────────────────────────
 
+
 class TestRunCoordinatorTerminalWorkflow(unittest.TestCase):
     """plan_complete status → router detects terminal → loop stops immediately."""
 
@@ -93,11 +98,13 @@ class TestRunCoordinatorTerminalWorkflow(unittest.TestCase):
         ws = _make_workspace(_HANDOFF_PLAN_COMPLETE)
         display = _mock_display()
 
-        patches = _common_patches() + [
+        patches = [
+            *_common_patches(),
             patch("agent_coordinator.infrastructure.tui.create_display", return_value=display),
         ]
         with _apply_patches(patches):
             from agent_coordinator.cli import run_coordinator
+
             run_coordinator(
                 workspace=ws,
                 max_turns=5,
@@ -112,11 +119,13 @@ class TestRunCoordinatorTerminalWorkflow(unittest.TestCase):
         ws = _make_workspace(_HANDOFF_PLAN_COMPLETE)
         display = _mock_display()
 
-        patches = _common_patches() + [
+        patches = [
+            *_common_patches(),
             patch("agent_coordinator.infrastructure.tui.create_display", return_value=display),
         ]
         with _apply_patches(patches):
             from agent_coordinator.cli import run_coordinator
+
             run_coordinator(workspace=ws, max_turns=5, reset=False, verbose=False)
 
         display.start_run.assert_called_once()
@@ -141,15 +150,17 @@ class TestRunCoordinatorSingleAgentTurn(unittest.TestCase):
         display = _mock_display()
         runner = self._make_mock_runner(ws)
 
-        patches = _common_patches() + [
+        patches = [
+            *_common_patches(),
             patch("agent_coordinator.infrastructure.tui.create_display", return_value=display),
             patch("agent_coordinator.cli.create_runner_for_agent", return_value=runner),
-            patch("agent_coordinator.cli.PromptBuilder", return_value=MagicMock(
-                **{"build.return_value": "test prompt"}
-            )),
+            patch(
+                "agent_coordinator.cli.PromptBuilder", return_value=MagicMock(**{"build.return_value": "test prompt"})
+            ),
         ]
         with _apply_patches(patches):
             from agent_coordinator.cli import run_coordinator
+
             run_coordinator(workspace=ws, max_turns=5, reset=False, verbose=False)
 
         display.start_agent_turn.assert_called_once()
@@ -159,23 +170,24 @@ class TestRunCoordinatorSingleAgentTurn(unittest.TestCase):
         display = _mock_display()
         runner = self._make_mock_runner(ws)
 
-        patches = _common_patches() + [
+        patches = [
+            *_common_patches(),
             patch("agent_coordinator.infrastructure.tui.create_display", return_value=display),
             patch("agent_coordinator.cli.create_runner_for_agent", return_value=runner),
-            patch("agent_coordinator.cli.PromptBuilder", return_value=MagicMock(
-                **{"build.return_value": "test prompt"}
-            )),
+            patch(
+                "agent_coordinator.cli.PromptBuilder", return_value=MagicMock(**{"build.return_value": "test prompt"})
+            ),
         ]
         with _apply_patches(patches):
             from agent_coordinator.cli import run_coordinator
+
             run_coordinator(workspace=ws, max_turns=5, reset=False, verbose=False)
 
         # finish_agent_turn(success=True, ...) must be called
         finish_calls = display.finish_agent_turn.call_args_list
-        self.assertTrue(any(
-            (c.args[0] if c.args else None) is True or c.kwargs.get("success") is True
-            for c in finish_calls
-        ))
+        self.assertTrue(
+            any((c.args[0] if c.args else None) is True or c.kwargs.get("success") is True for c in finish_calls)
+        )
 
 
 class TestRunCoordinatorReset(unittest.TestCase):
@@ -186,12 +198,14 @@ class TestRunCoordinatorReset(unittest.TestCase):
         display = _mock_display()
         mock_store = MagicMock()
 
-        patches = _common_patches() + [
+        patches = [
+            *_common_patches(),
             patch("agent_coordinator.infrastructure.tui.create_display", return_value=display),
             patch("agent_coordinator.cli.SessionStore", return_value=mock_store),
         ]
         with _apply_patches(patches):
             from agent_coordinator.cli import run_coordinator
+
             run_coordinator(workspace=ws, max_turns=5, reset=True, verbose=False)
 
         mock_store.clear.assert_called_once()
@@ -201,12 +215,14 @@ class TestRunCoordinatorReset(unittest.TestCase):
         display = _mock_display()
         mock_store = MagicMock()
 
-        patches = _common_patches() + [
+        patches = [
+            *_common_patches(),
             patch("agent_coordinator.infrastructure.tui.create_display", return_value=display),
             patch("agent_coordinator.cli.SessionStore", return_value=mock_store),
         ]
         with _apply_patches(patches):
             from agent_coordinator.cli import run_coordinator
+
             run_coordinator(workspace=ws, max_turns=5, reset=False, verbose=False)
 
         mock_store.clear.assert_not_called()
@@ -220,28 +236,27 @@ class TestRunCoordinatorPassedDisplay(unittest.TestCase):
         display = _mock_display()
 
         base_patches = _common_patches()
-        with _apply_patches(base_patches):
-            with patch("agent_coordinator.infrastructure.tui.create_display") as mock_factory:
-                from agent_coordinator.cli import run_coordinator
-                run_coordinator(workspace=ws, max_turns=5, reset=False, verbose=False,
-                                display=display)
-                mock_factory.assert_not_called()
+        with _apply_patches(base_patches), patch("agent_coordinator.infrastructure.tui.create_display") as mock_factory:
+            from agent_coordinator.cli import run_coordinator
+
+            run_coordinator(workspace=ws, max_turns=5, reset=False, verbose=False, display=display)
+            mock_factory.assert_not_called()
 
     def test_passed_display_close_is_called(self):
         ws = _make_workspace(_HANDOFF_PLAN_COMPLETE)
         display = _mock_display()
 
         base_patches = _common_patches()
-        with _apply_patches(base_patches):
-            with patch("agent_coordinator.infrastructure.tui.create_display"):
-                from agent_coordinator.cli import run_coordinator
-                run_coordinator(workspace=ws, max_turns=5, reset=False, verbose=False,
-                                display=display)
+        with _apply_patches(base_patches), patch("agent_coordinator.infrastructure.tui.create_display"):
+            from agent_coordinator.cli import run_coordinator
+
+            run_coordinator(workspace=ws, max_turns=5, reset=False, verbose=False, display=display)
 
         display.close.assert_called_once()
 
 
 # ── Utility ────────────────────────────────────────────────────────────────────
+
 
 class _PatchStack:
     """Context manager that enters a list of patch() objects and exposes their mocks."""

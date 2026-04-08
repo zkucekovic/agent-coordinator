@@ -126,7 +126,7 @@ class TestFileHash(unittest.TestCase):
             f.write_text("hello world")
             result = _file_hash(f)
             self.assertEqual(len(result), 64)
-            self.assertRegex(result, r'^[0-9a-f]{64}$')
+            self.assertRegex(result, r"^[0-9a-f]{64}$")
 
     def test_hash_changes_when_file_changes(self):
         with TemporaryDirectory() as tmp:

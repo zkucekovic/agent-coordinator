@@ -213,5 +213,4 @@ def create_display(reserved_lines: int = 10, force_simple: bool = False) -> Agen
     # Check if we're in a TTY
     if not force_simple and sys.stdout.isatty():
         return AgentOutputDisplay(reserved_lines=reserved_lines)
-    else:
-        return SimpleProgressDisplay()
+    return SimpleProgressDisplay()

@@ -3,7 +3,7 @@
 import unittest
 from io import StringIO
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from agent_coordinator.infrastructure.generic_runner import GenericRunner
 from agent_coordinator.infrastructure.pty_utils import PtyResult
@@ -27,10 +27,13 @@ class TestVerbosePrintInRun(unittest.TestCase):
         runner = GenericRunner({"command": ["cool-cli"]}, verbose=True)
         pty = _make_pty_result(stdout="output")
         captured = StringIO()
-        with patch(
-            "agent_coordinator.infrastructure.generic_runner.run_with_pty",
-            return_value=pty,
-        ), patch("sys.stdout", captured):
+        with (
+            patch(
+                "agent_coordinator.infrastructure.generic_runner.run_with_pty",
+                return_value=pty,
+            ),
+            patch("sys.stdout", captured),
+        ):
             runner.run("msg", Path("/ws"), session_id=session_id)
         return captured.getvalue()
 
@@ -62,8 +65,10 @@ class TestParseJsonViaRunWithPty(unittest.TestCase):
         pty = _make_pty_result(stdout='{"result": "verbose output"}')
         runner = GenericRunner({"command": ["t"], "output_format": "json"}, verbose=True)
         captured = StringIO()
-        with patch("agent_coordinator.infrastructure.generic_runner.run_with_pty", return_value=pty), \
-             patch("sys.stdout", captured):
+        with (
+            patch("agent_coordinator.infrastructure.generic_runner.run_with_pty", return_value=pty),
+            patch("sys.stdout", captured),
+        ):
             runner.run("msg", Path("/ws"))
         self.assertIn("verbose output", captured.getvalue())
 
@@ -80,17 +85,21 @@ class TestParseJsonViaRunWithPty(unittest.TestCase):
         pty = _make_pty_result(stdout="raw fallback text")
         runner = GenericRunner({"command": ["t"], "output_format": "json"}, verbose=True)
         captured = StringIO()
-        with patch("agent_coordinator.infrastructure.generic_runner.run_with_pty", return_value=pty), \
-             patch("sys.stdout", captured):
+        with (
+            patch("agent_coordinator.infrastructure.generic_runner.run_with_pty", return_value=pty),
+            patch("sys.stdout", captured),
+        ):
             runner.run("msg", Path("/ws"))
         self.assertIn("raw fallback text", captured.getvalue())
 
     def test_json_error_nonzero_with_no_text_raises(self):
         pty = _make_pty_result(stdout='{"result": ""}', stderr="oops", returncode=1)
         runner = _runner({"output_format": "json"})
-        with patch("agent_coordinator.infrastructure.generic_runner.run_with_pty", return_value=pty):
-            with self.assertRaises(RuntimeError) as ctx:
-                runner.run("msg", Path("/ws"))
+        with (
+            patch("agent_coordinator.infrastructure.generic_runner.run_with_pty", return_value=pty),
+            self.assertRaises(RuntimeError) as ctx,
+        ):
+            runner.run("msg", Path("/ws"))
         self.assertIn("exited 1", str(ctx.exception))
 
 
@@ -114,8 +123,10 @@ class TestParseJsonlDirectTextField(unittest.TestCase):
             verbose=True,
         )
         captured = StringIO()
-        with patch("agent_coordinator.infrastructure.generic_runner.run_with_pty", return_value=pty), \
-             patch("sys.stdout", captured):
+        with (
+            patch("agent_coordinator.infrastructure.generic_runner.run_with_pty", return_value=pty),
+            patch("sys.stdout", captured),
+        ):
             runner.run("msg", Path("/ws"))
         self.assertIn("verbose chunk", captured.getvalue())
 
@@ -128,8 +139,10 @@ class TestParseJsonlDirectTextField(unittest.TestCase):
             verbose=True,
         )
         captured = StringIO()
-        with patch("agent_coordinator.infrastructure.generic_runner.run_with_pty", return_value=pty), \
-             patch("sys.stdout", captured):
+        with (
+            patch("agent_coordinator.infrastructure.generic_runner.run_with_pty", return_value=pty),
+            patch("sys.stdout", captured),
+        ):
             result = runner.run("msg", Path("/ws"))
         self.assertIn("nested chunk", captured.getvalue())
         self.assertEqual(result.text, "nested chunk")
@@ -146,13 +159,15 @@ class TestParseJsonlDirectTextField(unittest.TestCase):
         """Line 171 RuntimeError in _parse_jsonl."""
         pty = _make_pty_result(stdout="", stderr="something failed", returncode=2)
         runner = _runner({"output_format": "jsonl"})
-        with patch("agent_coordinator.infrastructure.generic_runner.run_with_pty", return_value=pty):
-            with self.assertRaises(RuntimeError) as ctx:
-                runner.run("msg", Path("/ws"))
+        with (
+            patch("agent_coordinator.infrastructure.generic_runner.run_with_pty", return_value=pty),
+            self.assertRaises(RuntimeError) as ctx,
+        ):
+            runner.run("msg", Path("/ws"))
         self.assertIn("exited 2", str(ctx.exception))
 
     def test_jsonl_malformed_lines_skipped(self):
-        stdout = "not-json\n{bad}\n{\"text\": \"ok\"}\n"
+        stdout = 'not-json\n{bad}\n{"text": "ok"}\n'
         pty = _make_pty_result(stdout=stdout)
         runner = _runner({"output_format": "jsonl", "json_text_field": "text"})
         with patch("agent_coordinator.infrastructure.generic_runner.run_with_pty", return_value=pty):
@@ -166,9 +181,11 @@ class TestParseTextViaRunWithPty(unittest.TestCase):
     def test_text_format_nonzero_no_output_raises(self):
         pty = _make_pty_result(stdout="", stderr="died", returncode=1)
         runner = _runner({"output_format": "text"})
-        with patch("agent_coordinator.infrastructure.generic_runner.run_with_pty", return_value=pty):
-            with self.assertRaises(RuntimeError) as ctx:
-                runner.run("msg", Path("/ws"))
+        with (
+            patch("agent_coordinator.infrastructure.generic_runner.run_with_pty", return_value=pty),
+            self.assertRaises(RuntimeError) as ctx,
+        ):
+            runner.run("msg", Path("/ws"))
         self.assertIn("exited 1", str(ctx.exception))
 
     def test_text_format_nonzero_with_output_does_not_raise(self):
@@ -182,8 +199,10 @@ class TestParseTextViaRunWithPty(unittest.TestCase):
         pty = _make_pty_result(stdout="plain text result")
         runner = GenericRunner({"command": ["t"], "output_format": "text"}, verbose=True)
         captured = StringIO()
-        with patch("agent_coordinator.infrastructure.generic_runner.run_with_pty", return_value=pty), \
-             patch("sys.stdout", captured):
+        with (
+            patch("agent_coordinator.infrastructure.generic_runner.run_with_pty", return_value=pty),
+            patch("sys.stdout", captured),
+        ):
             runner.run("msg", Path("/ws"))
         self.assertIn("plain text result", captured.getvalue())
 

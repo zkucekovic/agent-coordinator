@@ -233,7 +233,8 @@ class StartupCLI:
             except Exception:
                 a(f"  {t.text_dim}tasks.json\033[0m  {t.led_blocked}parse error\033[0m")
 
-        sessions = workspace / ".coordinator_sessions.json"
+        state_dir = workspace / ".agent-coordinator"
+        sessions = state_dir / "sessions.json"
         if sessions.exists():
             try:
                 sess = json.loads(sessions.read_text())

@@ -1,8 +1,8 @@
 """Tests for src.domain.lifecycle — validate_transition and is_valid_transition."""
 
 import unittest
+
 from agent_coordinator.domain.lifecycle import (
-    STANDARD_TRANSITIONS,
     is_valid_transition,
     validate_transition,
 )
@@ -10,11 +10,8 @@ from agent_coordinator.domain.models import TaskStatus
 
 
 class TestIsValidTransition(unittest.TestCase):
-
     def test_planned_to_ready_for_engineering(self):
-        self.assertTrue(is_valid_transition(
-            TaskStatus.PLANNED, TaskStatus.READY_FOR_ENGINEERING
-        ))
+        self.assertTrue(is_valid_transition(TaskStatus.PLANNED, TaskStatus.READY_FOR_ENGINEERING))
 
     def test_planned_to_done_is_invalid(self):
         self.assertFalse(is_valid_transition(TaskStatus.PLANNED, TaskStatus.DONE))
@@ -24,33 +21,22 @@ class TestIsValidTransition(unittest.TestCase):
             self.assertFalse(is_valid_transition(TaskStatus.DONE, target))
 
     def test_rework_requested_to_in_engineering(self):
-        self.assertTrue(is_valid_transition(
-            TaskStatus.REWORK_REQUESTED, TaskStatus.IN_ENGINEERING
-        ))
+        self.assertTrue(is_valid_transition(TaskStatus.REWORK_REQUESTED, TaskStatus.IN_ENGINEERING))
 
     def test_blocked_can_resume(self):
-        self.assertTrue(is_valid_transition(
-            TaskStatus.BLOCKED, TaskStatus.IN_ENGINEERING
-        ))
-        self.assertTrue(is_valid_transition(
-            TaskStatus.BLOCKED, TaskStatus.READY_FOR_ENGINEERING
-        ))
+        self.assertTrue(is_valid_transition(TaskStatus.BLOCKED, TaskStatus.IN_ENGINEERING))
+        self.assertTrue(is_valid_transition(TaskStatus.BLOCKED, TaskStatus.READY_FOR_ENGINEERING))
 
     def test_needs_human_can_resume(self):
-        self.assertTrue(is_valid_transition(
-            TaskStatus.NEEDS_HUMAN, TaskStatus.IN_ENGINEERING
-        ))
+        self.assertTrue(is_valid_transition(TaskStatus.NEEDS_HUMAN, TaskStatus.IN_ENGINEERING))
 
     def test_custom_transitions_override_standard(self):
         custom = {TaskStatus.PLANNED: {TaskStatus.DONE}}
         self.assertTrue(is_valid_transition(TaskStatus.PLANNED, TaskStatus.DONE, custom))
-        self.assertFalse(is_valid_transition(
-            TaskStatus.PLANNED, TaskStatus.READY_FOR_ENGINEERING, custom
-        ))
+        self.assertFalse(is_valid_transition(TaskStatus.PLANNED, TaskStatus.READY_FOR_ENGINEERING, custom))
 
 
 class TestValidateTransition(unittest.TestCase):
-
     def test_valid_transition_does_not_raise(self):
         validate_transition("t1", TaskStatus.PLANNED, TaskStatus.READY_FOR_ENGINEERING)
 

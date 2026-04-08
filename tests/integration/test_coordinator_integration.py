@@ -16,7 +16,6 @@ about the expected handoff block format to reduce LLM variance.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import sys
 import tempfile
@@ -25,9 +24,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from tests.integration.conftest import requires_integration
-from agent_coordinator.infrastructure.handoff_reader import HandoffReader
 from agent_coordinator.domain.models import HandoffStatus
+from agent_coordinator.infrastructure.handoff_reader import HandoffReader
+from tests.integration.conftest import requires_integration
 
 # ── Workspace fixtures ────────────────────────────────────────────────────────
 
@@ -158,6 +157,7 @@ _AGENTS_JSON = {
 
 # ── Workspace builder ─────────────────────────────────────────────────────────
 
+
 def _build_workspace() -> Path:
     workspace = Path(tempfile.mkdtemp(prefix="coord_inttest_"))
     prompts = workspace / "prompts"
@@ -179,6 +179,7 @@ def _count_handoff_blocks(path: Path) -> int:
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
+
 @requires_integration
 class TestCoordinatorSingleEngineerTurn(unittest.TestCase):
     """One-turn test: engineer receives the architect seed block and responds."""
@@ -191,6 +192,7 @@ class TestCoordinatorSingleEngineerTurn(unittest.TestCase):
 
     def _run(self, max_turns: int = 1) -> None:
         from agent_coordinator.cli import run_coordinator
+
         run_coordinator(
             workspace=self._workspace,
             max_turns=max_turns,
@@ -227,15 +229,16 @@ class TestCoordinatorSingleEngineerTurn(unittest.TestCase):
             HandoffStatus.NEEDS_HUMAN,
         }
         self.assertIn(
-            msg.status, valid_statuses,
+            msg.status,
+            valid_statuses,
             f"Expected an engineer-appropriate status, got {msg.status!r}",
         )
 
     def test_event_log_written_after_turn(self):
         """The event log must have one entry after one coordinator turn."""
         self._run(max_turns=1)
-        log_path = self._workspace / "workflow_events.jsonl"
-        self.assertTrue(log_path.exists(), "workflow_events.jsonl must be created")
+        log_path = self._workspace / ".agent-coordinator" / "events.jsonl"
+        self.assertTrue(log_path.exists(), "events.jsonl must be created")
         entries = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
         self.assertEqual(len(entries), 1, "Expected exactly one event log entry")
         entry = entries[0]
@@ -245,7 +248,7 @@ class TestCoordinatorSingleEngineerTurn(unittest.TestCase):
     def test_session_file_created(self):
         """SessionStore must persist the engineer's session_id to disk."""
         self._run(max_turns=1)
-        session_file = self._workspace / ".coordinator_sessions.json"
+        session_file = self._workspace / ".agent-coordinator" / "sessions.json"
         self.assertTrue(session_file.exists(), "Session file must be created")
         data = json.loads(session_file.read_text())
         self.assertIn("developer", data, "Session file must contain 'engineer' key")
@@ -281,6 +284,7 @@ class TestCoordinatorTwoTurnCycle(unittest.TestCase):
 
     def _run(self) -> None:
         from agent_coordinator.cli import run_coordinator
+
         run_coordinator(
             workspace=self._workspace,
             max_turns=2,
@@ -306,7 +310,7 @@ class TestCoordinatorTwoTurnCycle(unittest.TestCase):
         to handoff.md — a real protocol failure worth flagging.
         """
         self._run()
-        log_path = self._workspace / "workflow_events.jsonl"
+        log_path = self._workspace / ".agent-coordinator" / "events.jsonl"
         self.assertTrue(log_path.exists())
         entries = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
         self.assertEqual(len(entries), 2, f"Expected 2 log entries, found {len(entries)}")
@@ -314,7 +318,7 @@ class TestCoordinatorTwoTurnCycle(unittest.TestCase):
     def test_first_event_is_engineer_turn(self):
         """The first event log entry should record the engineer's turn."""
         self._run()
-        log_path = self._workspace / "workflow_events.jsonl"
+        log_path = self._workspace / ".agent-coordinator" / "events.jsonl"
         entries = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
         self.assertGreaterEqual(len(entries), 1, "Expected at least one event log entry")
         self.assertEqual(entries[0]["agent"], "developer")
@@ -326,7 +330,7 @@ class TestCoordinatorTwoTurnCycle(unittest.TestCase):
         write to handoff.md (that failure is caught by test_event_log_has_two_entries).
         """
         self._run()
-        log_path = self._workspace / "workflow_events.jsonl"
+        log_path = self._workspace / ".agent-coordinator" / "events.jsonl"
         entries = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
         if len(entries) < 2:
             self.skipTest("Architect did not write to handoff.md (loop broke early)")
@@ -340,11 +344,12 @@ class TestCoordinatorTwoTurnCycle(unittest.TestCase):
         assertion is skipped — the failure is caught by test_event_log_has_two_entries.
         """
         self._run()
-        log_path = self._workspace / "workflow_events.jsonl"
-        entries = [json.loads(l) for l in log_path.read_text().splitlines() if l.strip()]
+        log_path = self._workspace / ".agent-coordinator" / "events.jsonl"
+        entries = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
         if len(entries) < 2:
-            self.skipTest("Architect did not write to handoff.md (loop broke early); "
-                          "covered by test_event_log_has_two_entries")
+            self.skipTest(
+                "Architect did not write to handoff.md (loop broke early); covered by test_event_log_has_two_entries"
+            )
         reader = HandoffReader(self._workspace / "handoff.md")
         msg = reader.read()
         self.assertEqual(msg.role, "architect")
@@ -352,7 +357,7 @@ class TestCoordinatorTwoTurnCycle(unittest.TestCase):
     def test_both_agents_have_session_ids(self):
         """Both agents must have persisted session IDs in the session file."""
         self._run()
-        session_file = self._workspace / ".coordinator_sessions.json"
+        session_file = self._workspace / ".agent-coordinator" / "sessions.json"
         self.assertTrue(session_file.exists())
         data = json.loads(session_file.read_text())
         self.assertIn("developer", data)
@@ -366,11 +371,12 @@ class TestCoordinatorTwoTurnCycle(unittest.TestCase):
         Skipped if the coordinator broke early (architect turn produced no file write).
         """
         self._run()
-        log_path = self._workspace / "workflow_events.jsonl"
-        entries = [json.loads(l) for l in log_path.read_text().splitlines() if l.strip()]
+        log_path = self._workspace / ".agent-coordinator" / "events.jsonl"
+        entries = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
         if len(entries) < 2:
-            self.skipTest("Architect did not write to handoff.md (loop broke early); "
-                          "covered by test_event_log_has_two_entries")
+            self.skipTest(
+                "Architect did not write to handoff.md (loop broke early); covered by test_event_log_has_two_entries"
+            )
         reader = HandoffReader(self._workspace / "handoff.md")
         msg = reader.read()
         valid_statuses = {
@@ -382,7 +388,8 @@ class TestCoordinatorTwoTurnCycle(unittest.TestCase):
             HandoffStatus.NEEDS_HUMAN,
         }
         self.assertIn(
-            msg.status, valid_statuses,
+            msg.status,
+            valid_statuses,
             f"Architect wrote unrecognised status: {msg.status!r}",
         )
 

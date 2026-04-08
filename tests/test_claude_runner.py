@@ -3,7 +3,7 @@
 import json
 import unittest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from agent_coordinator.infrastructure.claude_runner import ClaudeCodeRunner
 from agent_coordinator.infrastructure.pty_utils import PtyResult
@@ -18,9 +18,17 @@ class TestClaudeRunnerBuildCmd(unittest.TestCase):
         cmd = self.runner._build_cmd("hello", self.workspace, None, None)
         self.assertEqual(
             cmd,
-            ["claude", "--print", "--output-format", "json",
-             "--permission-mode", "bypassPermissions",
-             "--cwd", str(self.workspace), "hello"],
+            [
+                "claude",
+                "--print",
+                "--output-format",
+                "json",
+                "--permission-mode",
+                "bypassPermissions",
+                "--cwd",
+                str(self.workspace),
+                "hello",
+            ],
         )
 
     def test_build_cmd_with_session_id(self):

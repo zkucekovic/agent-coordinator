@@ -1,23 +1,23 @@
 """Tests for coordinator config loading, task sync, file hashing, and retry prompt."""
 
 import json
-import tempfile
 import shutil
+import tempfile
 import unittest
 from pathlib import Path
 
+from agent_coordinator.application.task_service import TaskService
 from agent_coordinator.cli import (
-    load_config,
-    load_agent_config,
-    load_retry_policy,
-    _sync_task_status,
-    _file_hash,
-    _retry_prompt,
     _DEFAULT_AGENTS,
     _HANDOFF_TO_TASK_STATUS,
+    _file_hash,
+    _retry_prompt,
+    _sync_task_status,
+    load_agent_config,
+    load_config,
+    load_retry_policy,
 )
-from agent_coordinator.application.task_service import TaskService
-from agent_coordinator.domain.models import HandoffStatus, Task, TaskStatus
+from agent_coordinator.domain.models import HandoffStatus, TaskStatus
 from agent_coordinator.domain.retry_policy import RetryPolicy
 from agent_coordinator.infrastructure.task_repository import JsonTaskRepository
 
@@ -80,30 +80,22 @@ class TestSyncTaskStatus(unittest.TestCase):
         return TaskService(JsonTaskRepository(self._tasks_path))
 
     def test_sync_continue_transitions_to_in_engineering(self):
-        svc = self._make_service([
-            {"id": "t1", "title": "Test", "status": "ready_for_engineering"}
-        ])
+        svc = self._make_service([{"id": "t1", "title": "Test", "status": "ready_for_engineering"}])
         _sync_task_status(svc, "t1", HandoffStatus.CONTINUE, verbose=False)
         self.assertEqual(svc.get("t1").status, TaskStatus.IN_ENGINEERING)
 
     def test_sync_review_required_transitions(self):
-        svc = self._make_service([
-            {"id": "t1", "title": "Test", "status": "in_engineering"}
-        ])
+        svc = self._make_service([{"id": "t1", "title": "Test", "status": "in_engineering"}])
         _sync_task_status(svc, "t1", HandoffStatus.REVIEW_REQUIRED, verbose=False)
         self.assertEqual(svc.get("t1").status, TaskStatus.READY_FOR_ARCHITECT_REVIEW)
 
     def test_sync_approved_transitions_to_done(self):
-        svc = self._make_service([
-            {"id": "t1", "title": "Test", "status": "ready_for_architect_review"}
-        ])
+        svc = self._make_service([{"id": "t1", "title": "Test", "status": "ready_for_architect_review"}])
         _sync_task_status(svc, "t1", HandoffStatus.APPROVED, verbose=False)
         self.assertEqual(svc.get("t1").status, TaskStatus.DONE)
 
     def test_sync_rework_required_transitions(self):
-        svc = self._make_service([
-            {"id": "t1", "title": "Test", "status": "ready_for_architect_review"}
-        ])
+        svc = self._make_service([{"id": "t1", "title": "Test", "status": "ready_for_architect_review"}])
         _sync_task_status(svc, "t1", HandoffStatus.REWORK_REQUIRED, verbose=False)
         self.assertEqual(svc.get("t1").status, TaskStatus.REWORK_REQUESTED)
 
@@ -112,32 +104,24 @@ class TestSyncTaskStatus(unittest.TestCase):
         _sync_task_status(None, "t1", HandoffStatus.APPROVED, verbose=False)
 
     def test_sync_skips_unknown_task(self):
-        svc = self._make_service([
-            {"id": "t1", "title": "Test", "status": "planned"}
-        ])
+        svc = self._make_service([{"id": "t1", "title": "Test", "status": "planned"}])
         # Should not raise for unknown task
         _sync_task_status(svc, "t-unknown", HandoffStatus.APPROVED, verbose=False)
 
     def test_sync_skips_invalid_transition(self):
-        svc = self._make_service([
-            {"id": "t1", "title": "Test", "status": "planned"}
-        ])
+        svc = self._make_service([{"id": "t1", "title": "Test", "status": "planned"}])
         # planned -> done is not valid, should skip silently
         _sync_task_status(svc, "t1", HandoffStatus.APPROVED, verbose=False)
         self.assertEqual(svc.get("t1").status, TaskStatus.PLANNED)
 
     def test_sync_skips_plan_complete(self):
-        svc = self._make_service([
-            {"id": "t1", "title": "Test", "status": "done"}
-        ])
+        svc = self._make_service([{"id": "t1", "title": "Test", "status": "done"}])
         # plan_complete has no mapping, should skip
         _sync_task_status(svc, "t1", HandoffStatus.PLAN_COMPLETE, verbose=False)
         self.assertEqual(svc.get("t1").status, TaskStatus.DONE)
 
     def test_sync_skips_same_status(self):
-        svc = self._make_service([
-            {"id": "t1", "title": "Test", "status": "in_engineering"}
-        ])
+        svc = self._make_service([{"id": "t1", "title": "Test", "status": "in_engineering"}])
         # Already in_engineering, CONTINUE maps to in_engineering — should skip
         _sync_task_status(svc, "t1", HandoffStatus.CONTINUE, verbose=False)
         self.assertEqual(svc.get("t1").status, TaskStatus.IN_ENGINEERING)

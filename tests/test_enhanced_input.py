@@ -1,12 +1,9 @@
 """Tests for agent_coordinator/infrastructure/enhanced_input.py"""
+
 from __future__ import annotations
 
-import os
 import sys
-from pathlib import Path
 from unittest.mock import MagicMock, call, patch
-
-import pytest
 
 import agent_coordinator.infrastructure.enhanced_input as ei_module
 from agent_coordinator.infrastructure.enhanced_input import (
@@ -18,8 +15,8 @@ from agent_coordinator.infrastructure.enhanced_input import (
     get_input,
 )
 
-
 # ── EnhancedInput.__init__ & _setup_readline ──────────────────────────────────
+
 
 class TestEnhancedInputInit:
     def test_default_no_history_file(self):
@@ -54,6 +51,7 @@ class TestEnhancedInputInit:
 
 # ── save_history ──────────────────────────────────────────────────────────────
 
+
 class TestSaveHistory:
     def test_save_history_no_file_does_nothing(self):
         obj = EnhancedInput()
@@ -80,6 +78,7 @@ class TestSaveHistory:
 
 # ── EnhancedInput.input ───────────────────────────────────────────────────────
 
+
 class TestEnhancedInputMethod:
     def test_basic_input_returns_user_text(self):
         with patch("builtins.input", return_value="hello"):
@@ -88,39 +87,38 @@ class TestEnhancedInputMethod:
         assert result == "hello"
 
     def test_input_with_default_sets_pre_input_hook(self):
-        hook_calls = []
-        with patch("readline.set_pre_input_hook") as mock_hook:
-            with patch("builtins.input", return_value="typed"):
-                obj = EnhancedInput()
-                result = obj.input("p: ", default="mydefault")
+        _hook_calls = []
+        with patch("readline.set_pre_input_hook") as mock_hook, patch("builtins.input", return_value="typed"):
+            obj = EnhancedInput()
+            result = obj.input("p: ", default="mydefault")
         # set_pre_input_hook called twice: once to set, once to clear (None)
         assert mock_hook.call_count == 2
         assert mock_hook.call_args_list[-1] == call(None)
         assert result == "typed"
 
     def test_input_without_default_does_not_set_hook(self):
-        with patch("readline.set_pre_input_hook") as mock_hook:
-            with patch("builtins.input", return_value="typed"):
-                obj = EnhancedInput()
-                obj.input("p: ")
+        with patch("readline.set_pre_input_hook") as mock_hook, patch("builtins.input", return_value="typed"):
+            obj = EnhancedInput()
+            obj.input("p: ")
         mock_hook.assert_not_called()
 
     def test_input_with_completer(self):
         my_completer = MagicMock(return_value=None)
-        with patch("readline.set_completer") as mock_sc:
-            with patch("builtins.input", return_value="done"):
-                obj = EnhancedInput()
-                result = obj.input("p: ", completer=my_completer)
+        with patch("readline.set_completer") as mock_sc, patch("builtins.input", return_value="done"):
+            obj = EnhancedInput()
+            result = obj.input("p: ", completer=my_completer)
         # set_completer called to set and then clear
         assert mock_sc.call_count == 2
         assert mock_sc.call_args_list[-1] == call(None)
         assert result == "done"
 
     def test_input_when_readline_unavailable_uses_builtin(self):
-        with patch.object(ei_module, "READLINE_AVAILABLE", False):
-            with patch("builtins.input", return_value="fallback") as mock_input:
-                obj = EnhancedInput()
-                result = obj.input("p: ")
+        with (
+            patch.object(ei_module, "READLINE_AVAILABLE", False),
+            patch("builtins.input", return_value="fallback") as mock_input,
+        ):
+            obj = EnhancedInput()
+            result = obj.input("p: ")
         mock_input.assert_called_once_with("p: ")
         assert result == "fallback"
 
@@ -133,6 +131,7 @@ class TestEnhancedInputMethod:
 
 
 # ── EnhancedInput.choice ──────────────────────────────────────────────────────
+
 
 class TestChoiceMethod:
     def test_valid_choice_returned(self):
@@ -157,10 +156,9 @@ class TestChoiceMethod:
         assert "Invalid choice" in out
 
     def test_default_prefills_choice(self):
-        with patch("readline.set_pre_input_hook") as mock_hook:
-            with patch("builtins.input", return_value="yes"):
-                obj = EnhancedInput()
-                result = obj.choice("Pick: ", ["yes", "no"], default="yes")
+        with patch("readline.set_pre_input_hook") as _mock_hook, patch("builtins.input", return_value="yes"):
+            obj = EnhancedInput()
+            result = obj.choice("Pick: ", ["yes", "no"], default="yes")
         assert result == "yes"
 
     def test_completer_matches_prefix(self):
@@ -171,26 +169,31 @@ class TestChoiceMethod:
             # Only invoke when a real completer is passed (not the clear call with None)
             if completer_fn is None:
                 return
-            completions.extend([
-                completer_fn("y", 0),
-                completer_fn("y", 1),
-                completer_fn("n", 0),
-                completer_fn("z", 0),
-            ])
+            completions.extend(
+                [
+                    completer_fn("y", 0),
+                    completer_fn("y", 1),
+                    completer_fn("n", 0),
+                    completer_fn("z", 0),
+                ]
+            )
 
-        with patch("readline.set_completer", side_effect=capture_completer):
-            with patch("readline.set_pre_input_hook"):
-                with patch("builtins.input", return_value="yes"):
-                    obj = EnhancedInput()
-                    obj.choice("Pick: ", ["yes", "no"], default="yes")
+        with (
+            patch("readline.set_completer", side_effect=capture_completer),
+            patch("readline.set_pre_input_hook"),
+            patch("builtins.input", return_value="yes"),
+        ):
+            obj = EnhancedInput()
+            obj.choice("Pick: ", ["yes", "no"], default="yes")
 
-        assert completions[0] == "yes"   # "y" state=0
-        assert completions[1] is None    # "y" state=1 (only one match)
-        assert completions[2] == "no"    # "n" state=0
-        assert completions[3] is None    # "z" state=0 (no match)
+        assert completions[0] == "yes"  # "y" state=0
+        assert completions[1] is None  # "y" state=1 (only one match)
+        assert completions[2] == "no"  # "n" state=0
+        assert completions[3] is None  # "z" state=0 (no match)
 
 
 # ── EnhancedInput.multiline ───────────────────────────────────────────────────
+
 
 class TestMultilineMethod:
     def test_returns_lines_joined(self):
@@ -229,6 +232,7 @@ class TestMultilineMethod:
 
 # ── Global get_input ──────────────────────────────────────────────────────────
 
+
 class TestGetInput:
     def test_returns_enhanced_input_instance(self):
         # Reset global to ensure fresh creation
@@ -249,6 +253,7 @@ class TestGetInput:
 
 # ── Convenience functions ─────────────────────────────────────────────────────
 
+
 class TestConvenienceFunctions:
     def setup_method(self):
         ei_module._global_input = None
@@ -262,9 +267,8 @@ class TestConvenienceFunctions:
         assert result == "typed"
 
     def test_enhanced_input_with_default(self):
-        with patch("readline.set_pre_input_hook"):
-            with patch("builtins.input", return_value="typed"):
-                result = enhanced_input("p: ", default="def")
+        with patch("readline.set_pre_input_hook"), patch("builtins.input", return_value="typed"):
+            result = enhanced_input("p: ", default="def")
         assert result == "typed"
 
     def test_enhanced_choice_returns_valid(self):
@@ -281,6 +285,7 @@ class TestConvenienceFunctions:
 
 # ── Colors ────────────────────────────────────────────────────────────────────
 
+
 class TestColors:
     def test_colorize_when_disabled_returns_text(self):
         with patch.object(Colors, "ENABLED", False):
@@ -288,9 +293,8 @@ class TestColors:
         assert result == "hello"
 
     def test_colorize_when_enabled_wraps_text(self):
-        with patch.object(Colors, "ENABLED", True):
-            with patch.object(Colors, "RESET", "\033[0m"):
-                result = Colors.colorize("hello", "\033[31m")
+        with patch.object(Colors, "ENABLED", True), patch.object(Colors, "RESET", "\033[0m"):
+            result = Colors.colorize("hello", "\033[31m")
         assert result == "\033[31mhello\033[0m"
 
     def test_prompt_returns_string(self):

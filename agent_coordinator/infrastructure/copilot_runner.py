@@ -33,7 +33,7 @@ class CopilotRunner(AgentRunner):
         session = self._extract_session_id(result.stderr, session_id, result.stdout)
         return RunResult(session_id=session, text=result.stdout)
 
-    def _build_cmd(self, message, workspace, session_id, model):
+    def _build_cmd(self, message, workspace, session_id, model):  # noqa: ARG002
         cmd = ["copilot", "--prompt", message, "--allow-all", "--no-color"]
         if model:
             cmd.extend(["--model", model])
@@ -41,17 +41,17 @@ class CopilotRunner(AgentRunner):
             cmd.extend(["--resume", session_id])
         return cmd
 
-    def _extract_session_id(self, stderr: str, fallback: str | None, stdout: str) -> str:
+    def _extract_session_id(self, stderr: str, fallback: str | None, stdout: str) -> str:  # noqa: ARG002
         import re
 
-        _UUID_RE = re.compile(
+        uuid_re = re.compile(
             r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
             re.IGNORECASE,
         )
         if stderr:
-            m = _UUID_RE.search(stderr)
+            m = uuid_re.search(stderr)
             if m:
                 return m.group(0)
-        if fallback and _UUID_RE.fullmatch(fallback):
+        if fallback and uuid_re.fullmatch(fallback):
             return fallback
         return ""

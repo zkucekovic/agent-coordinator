@@ -2,7 +2,7 @@
 
 import unittest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from agent_coordinator.infrastructure.copilot_runner import CopilotRunner
 from agent_coordinator.infrastructure.pty_utils import PtyResult

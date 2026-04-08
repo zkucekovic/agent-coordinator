@@ -2,7 +2,6 @@
 
 import tempfile
 import unittest
-from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -21,10 +20,13 @@ class TestManualRunnerInstantiation(unittest.TestCase):
 
     def test_is_agent_runner(self):
         from agent_coordinator.application.runner import AgentRunner
+
         self.assertIsInstance(ManualRunner(), AgentRunner)
 
     def test_accepts_input_fn(self):
-        fn = lambda prompt: "ok"
+        def fn(prompt):
+            return "ok"
+
         runner = ManualRunner(input_fn=fn)
         self.assertIs(runner._input_fn, fn)
 
@@ -43,8 +45,7 @@ class TestManualRunnerRun(unittest.TestCase):
         with patch("sys.stdin") as mock_stdin:
             mock_stdin.isatty.return_value = True
             with patch("builtins.input", return_value=""):
-                result = runner.run(message, self.workspace, session_id=session_id,
-                                    model=model, on_output=lines.append)
+                result = runner.run(message, self.workspace, session_id=session_id, model=model, on_output=lines.append)
         return result, "\n".join(lines)
 
     def test_returns_run_result(self):
@@ -84,7 +85,7 @@ class TestManualRunnerRun(unittest.TestCase):
 
     def test_calls_input_fn_when_provided(self):
         calls = []
-        runner = ManualRunner(verbose=False, input_fn=lambda p: calls.append(p))
+        runner = ManualRunner(verbose=False, input_fn=calls.append)
         runner.run("msg", self.workspace, on_output=lambda s: None)
         self.assertEqual(len(calls), 1)
         self.assertIn("Enter", calls[0])
@@ -103,7 +104,7 @@ class TestManualRunnerRun(unittest.TestCase):
         with patch("sys.stdin") as mock_stdin:
             mock_stdin.isatty.return_value = False
             runner.run("msg", self.workspace, on_output=lines.append)
-        self.assertTrue(any("not a TTY" in l for l in lines))
+        self.assertTrue(any("not a TTY" in line for line in lines))
 
     def test_on_output_receives_display_lines(self):
         runner = ManualRunner(verbose=False)

@@ -3,7 +3,7 @@
 import json
 import unittest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from agent_coordinator.infrastructure.opencode_runner import OpenCodeRunner
 from agent_coordinator.infrastructure.pty_utils import PtyResult

@@ -1,11 +1,11 @@
 """Tests for src.domain.retry_policy."""
 
 import unittest
+
 from agent_coordinator.domain.retry_policy import RetryPolicy
 
 
 class TestRetryPolicy(unittest.TestCase):
-
     def test_default_values(self):
         p = RetryPolicy()
         self.assertEqual(p.max_rework, 3)

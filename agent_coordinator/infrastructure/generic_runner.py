@@ -127,10 +127,9 @@ class GenericRunner(AgentRunner):
 
         if output_format == "jsonl":
             return self._parse_jsonl(result, fallback_session_id)
-        elif output_format == "json":
+        if output_format == "json":
             return self._parse_json(result, fallback_session_id)
-        else:
-            return self._parse_text(result, fallback_session_id)
+        return self._parse_text(result, fallback_session_id)
 
     def _parse_jsonl(
         self,
@@ -162,7 +161,7 @@ class GenericRunner(AgentRunner):
                     text_parts.append(chunk)
                     if self._verbose:
                         print(chunk, end="", flush=True)
-            except (json.JSONDecodeError, KeyError, TypeError):
+            except (json.JSONDecodeError, KeyError, TypeError):  # noqa: PERF203
                 pass
 
         if self._verbose and text_parts:

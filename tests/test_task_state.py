@@ -4,9 +4,9 @@ import json
 import os
 import tempfile
 import unittest
-from pathlib import Path
-from agent_coordinator.task_store import TaskStore
+
 from agent_coordinator.models import TaskStatus
+from agent_coordinator.task_store import TaskStore
 
 SAMPLE_TASKS = {
     "tasks": [
@@ -14,32 +14,25 @@ SAMPLE_TASKS = {
             "id": "task-A",
             "title": "Task Alpha",
             "status": "planned",
-            "acceptance_criteria": ["Do thing A", "Do thing B"]
+            "acceptance_criteria": ["Do thing A", "Do thing B"],
         },
-        {
-            "id": "task-B",
-            "title": "Task Beta",
-            "status": "planned",
-            "acceptance_criteria": []
-        }
+        {"id": "task-B", "title": "Task Beta", "status": "planned", "acceptance_criteria": []},
     ]
 }
 
 
 class TestTaskStore(unittest.TestCase):
-
     def setUp(self):
-        self._tf = tempfile.NamedTemporaryFile(
-            mode='w', suffix='.json', delete=False,
-            dir=os.path.dirname(os.path.abspath(__file__))
-        )
-        json.dump(SAMPLE_TASKS, self._tf)
-        self._tf.flush()
-        self._tf.close()
-        self.store = TaskStore(self._tf.name)
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, dir=os.path.dirname(os.path.abspath(__file__))
+        ) as tf:
+            json.dump(SAMPLE_TASKS, tf)
+            tf.flush()
+        self._tf_name = tf.name
+        self.store = TaskStore(self._tf_name)
 
     def tearDown(self):
-        os.unlink(self._tf.name)
+        os.unlink(self._tf_name)
 
     def test_loads_from_json(self):
         tasks = self.store.all()
@@ -68,7 +61,7 @@ class TestTaskStore(unittest.TestCase):
 
     def test_update_status_persists(self):
         self.store.update_status("task-A", TaskStatus.IN_ENGINEERING)
-        fresh = TaskStore(self._tf.name)
+        fresh = TaskStore(self._tf_name)
         self.assertEqual(fresh.get("task-A").status, TaskStatus.IN_ENGINEERING)
 
     def test_update_status_invalid_transition_raises(self):
@@ -98,7 +91,7 @@ class TestTaskStore(unittest.TestCase):
     def test_set_acceptance_criteria_persists(self):
         criteria = ["Criterion 1", "Criterion 2"]
         self.store.set_acceptance_criteria("task-A", criteria)
-        fresh = TaskStore(self._tf.name)
+        fresh = TaskStore(self._tf_name)
         self.assertEqual(fresh.get("task-A").acceptance_criteria, criteria)
 
     def test_set_acceptance_criteria_unknown_task_raises(self):
@@ -106,5 +99,5 @@ class TestTaskStore(unittest.TestCase):
             self.store.set_acceptance_criteria("ghost-task", ["x"])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

@@ -43,7 +43,7 @@ agent_coordinator/
 4. An `AgentRunner` dispatches to the backend CLI subprocess
 5. `cli.py` verifies `handoff.md` was updated; retries with a reminder if not
 6. `TaskService` syncs `tasks.json` based on `STATUS:`
-7. Event appended to `workflow_events.jsonl`
+7. Event appended to `.agent-coordinator/events.jsonl`
 
 ## Key Conventions
 
@@ -66,4 +66,4 @@ Role prompt → AGENTS.md (project rules) → SPECIFICATION.md / plan.md → sha
 `agent_coordinator/domain/` has zero I/O and zero external dependencies. All file access goes through `infrastructure/`, all orchestration through `application/`. Tests for domain logic use no mocks.
 
 ### Session persistence
-Agent session IDs are stored in `<workspace>/.coordinator_sessions.json` (gitignored). Re-running the coordinator resumes context. Use `--reset` to clear sessions.
+Agent session IDs are stored in `<workspace>/.agent-coordinator/sessions.json` (gitignored). Re-running the coordinator resumes context. Use `--reset` to clear sessions.

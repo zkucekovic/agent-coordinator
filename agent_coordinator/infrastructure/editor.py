@@ -249,8 +249,7 @@ You can provide:
             ]
         )
         # Add current handoff as comments
-        for line in current_handoff.split("\n")[:20]:
-            comment_lines.append(line[:70])
+        comment_lines.extend(line[:70] for line in current_handoff.split("\n")[:20])
         comment_lines.append("=" * 50)
         comment_lines.append("")
 

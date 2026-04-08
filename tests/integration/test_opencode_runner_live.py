@@ -9,7 +9,6 @@ Tests:
   3. An absurd/bad command fails gracefully with a RuntimeError.
 """
 
-import os
 import sys
 import tempfile
 import unittest
@@ -17,19 +16,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from tests.integration.conftest import requires_integration
 from agent_coordinator.infrastructure.opencode_runner import OpenCodeRunner
+from tests.integration.conftest import requires_integration
 
 
 @requires_integration
 class TestOpenCodeRunnerLive(unittest.TestCase):
-
     def setUp(self):
         self._workspace = Path(tempfile.mkdtemp())
         self._runner = OpenCodeRunner(verbose=False)
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self._workspace, ignore_errors=True)
 
     # ── Basic run ─────────────────────────────────────────────────────────────
@@ -97,7 +96,7 @@ class TestOpenCodeRunnerLive(unittest.TestCase):
 
     def test_run_uses_specified_workspace_directory(self):
         """OpenCode should be able to write files in the given workspace."""
-        result = self._runner.run(
+        _result = self._runner.run(
             message=(
                 "Create a file called `runner_test_output.txt` "
                 "in the current directory with content 'runner_ok'. "

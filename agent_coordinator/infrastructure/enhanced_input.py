@@ -171,7 +171,7 @@ _global_input: EnhancedInput | None = None
 
 def get_input() -> EnhancedInput:
     """Get or create global EnhancedInput instance."""
-    global _global_input
+    global _global_input  # noqa: PLW0603
     if _global_input is None:
         # Store history in user's home directory
         history_file = Path.home() / ".agent_coordinator_history"

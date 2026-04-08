@@ -1,4 +1,5 @@
 """Unit tests for Screen rendering methods in agent_coordinator/infrastructure/tui.py."""
+
 import io
 import unittest
 from unittest.mock import patch
@@ -30,6 +31,7 @@ def make_screen() -> tuple[Screen, io.StringIO]:
 
 # ── _render_header ─────────────────────────────────────────────────────────────
 
+
 class TestRenderHeader(unittest.TestCase):
     def test_contains_title(self):
         screen, _ = make_screen()
@@ -41,13 +43,13 @@ class TestRenderHeader(unittest.TestCase):
         result = screen._render_header()
         self.assertIn("\033", result)
 
-    def test_paused_contains_PAUSED(self):
+    def test_paused_contains_paused_text(self):
         screen, _ = make_screen()
         screen._paused = True
         result = screen._render_header()
         self.assertIn("PAUSED", result)
 
-    def test_not_paused_no_PAUSED(self):
+    def test_not_paused_no_paused_text(self):
         screen, _ = make_screen()
         screen._paused = False
         result = screen._render_header()
@@ -60,6 +62,7 @@ class TestRenderHeader(unittest.TestCase):
 
 
 # ── _render_separator ──────────────────────────────────────────────────────────
+
 
 class TestRenderSeparator(unittest.TestCase):
     def test_contains_separator_char(self):
@@ -76,6 +79,7 @@ class TestRenderSeparator(unittest.TestCase):
 
 # ── _render_status_bar ─────────────────────────────────────────────────────────
 
+
 class TestRenderStatusBar(unittest.TestCase):
     def test_returns_non_empty(self):
         screen, _ = make_screen()
@@ -91,6 +95,7 @@ class TestRenderStatusBar(unittest.TestCase):
 
 
 # ── _render_content_block ──────────────────────────────────────────────────────
+
 
 class TestRenderContentBlock(unittest.TestCase):
     def test_returns_string(self):
@@ -114,6 +119,7 @@ class TestRenderContentBlock(unittest.TestCase):
 
 # ── _append_content ────────────────────────────────────────────────────────────
 
+
 class TestAppendContent(unittest.TestCase):
     def test_single_append_adds_to_lines(self):
         screen, _ = make_screen()
@@ -131,6 +137,7 @@ class TestAppendContent(unittest.TestCase):
 
 # ── _full_render ───────────────────────────────────────────────────────────────
 
+
 class TestFullRender(unittest.TestCase):
     def test_no_exception_writes_to_stream(self):
         screen, s = make_screen()
@@ -144,6 +151,7 @@ class TestFullRender(unittest.TestCase):
 
 
 # ── start_agent_turn ───────────────────────────────────────────────────────────
+
 
 class TestStartAgentTurn(unittest.TestCase):
     def test_sets_current_agent(self):
@@ -164,6 +172,7 @@ class TestStartAgentTurn(unittest.TestCase):
 
 
 # ── finish_agent_turn ──────────────────────────────────────────────────────────
+
 
 class TestFinishAgentTurn(unittest.TestCase):
     def test_success_does_not_raise(self):
@@ -191,6 +200,7 @@ class TestFinishAgentTurn(unittest.TestCase):
 
 # ── update_output ──────────────────────────────────────────────────────────────
 
+
 class TestUpdateOutput(unittest.TestCase):
     def test_active_appends_to_lines(self):
         screen, _ = make_screen()
@@ -206,6 +216,7 @@ class TestUpdateOutput(unittest.TestCase):
 
 
 # ── close ──────────────────────────────────────────────────────────────────────
+
 
 class TestClose(unittest.TestCase):
     def test_inactive_is_noop(self):
@@ -224,6 +235,7 @@ class TestClose(unittest.TestCase):
 
 
 # ── set_paused ─────────────────────────────────────────────────────────────────
+
 
 class TestSetPaused(unittest.TestCase):
     def test_set_true(self):
@@ -246,11 +258,12 @@ class TestSetPaused(unittest.TestCase):
 
 # ── show_error_dialog ──────────────────────────────────────────────────────────
 
+
 class TestShowErrorDialog(unittest.TestCase):
     def test_fallback_when_inactive_returns_chosen_key(self):
         screen, _ = make_screen()
         screen._active = False
-        with patch("sys.stderr") as mock_err, patch("builtins.input", return_value="q"):
+        with patch("sys.stderr") as _mock_err, patch("builtins.input", return_value="q"):
             result = screen.show_error_dialog("Title", "something went wrong", [("q", "Quit")])
         self.assertEqual(result, "q")
 
@@ -266,9 +279,7 @@ class TestShowErrorDialog(unittest.TestCase):
         screen, _ = make_screen()
         screen._active = False
         with patch("sys.stderr"), patch("builtins.input", return_value=""):
-            result = screen.show_error_dialog(
-                "Title", "msg", [("r", "Retry"), ("q", "Quit")]
-            )
+            result = screen.show_error_dialog("Title", "msg", [("r", "Retry"), ("q", "Quit")])
         self.assertEqual(result, "q")
 
 

@@ -11,6 +11,8 @@ coverage.json
 htmlcov/
 
 # Coordinator runtime artifacts
+.agent-coordinator/
+# Legacy paths (kept for old workspaces)
 .coordinator_sessions.json
 .coordinator-debug.log
 workflow_events.jsonl

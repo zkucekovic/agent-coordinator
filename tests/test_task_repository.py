@@ -6,27 +6,25 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from agent_coordinator.domain.models import Task, TaskStatus
+from agent_coordinator.domain.models import TaskStatus
 from agent_coordinator.infrastructure.task_repository import JsonTaskRepository
 
 
 def _write_json(data: dict | list) -> Path:
-    tmp = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", delete=False, dir=tempfile.gettempdir()
-    )
-    json.dump(data, tmp)
-    tmp.flush()
-    tmp.close()
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, dir=tempfile.gettempdir()) as tmp:
+        json.dump(data, tmp)
+        tmp.flush()
     return Path(tmp.name)
 
 
 class TestJsonTaskRepositoryLoad(unittest.TestCase):
-
     def test_loads_versioned_format(self):
-        path = _write_json({
-            "version": 1,
-            "tasks": [{"id": "t1", "title": "A", "status": "planned"}],
-        })
+        path = _write_json(
+            {
+                "version": 1,
+                "tasks": [{"id": "t1", "title": "A", "status": "planned"}],
+            }
+        )
         repo = JsonTaskRepository(path)
         os.unlink(path)
         self.assertIsNotNone(repo.get("t1"))
@@ -44,10 +42,19 @@ class TestJsonTaskRepositoryLoad(unittest.TestCase):
         self.assertIsNotNone(repo.get("t1"))
 
     def test_loads_rework_count_and_depends_on(self):
-        path = _write_json({"tasks": [{
-            "id": "t1", "title": "A", "status": "planned",
-            "rework_count": 2, "depends_on": ["t0"],
-        }]})
+        path = _write_json(
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "A",
+                        "status": "planned",
+                        "rework_count": 2,
+                        "depends_on": ["t0"],
+                    }
+                ]
+            }
+        )
         repo = JsonTaskRepository(path)
         task = repo.get("t1")
         os.unlink(path)
@@ -63,7 +70,6 @@ class TestJsonTaskRepositoryLoad(unittest.TestCase):
 
 
 class TestJsonTaskRepositorySave(unittest.TestCase):
-
     def test_save_writes_versioned_format(self):
         path = _write_json({"tasks": [{"id": "t1", "title": "A", "status": "planned"}]})
         repo = JsonTaskRepository(path)
@@ -76,9 +82,17 @@ class TestJsonTaskRepositorySave(unittest.TestCase):
         self.assertIn("tasks", raw)
 
     def test_save_persists_all_fields(self):
-        path = _write_json({"tasks": [{
-            "id": "t1", "title": "A", "status": "planned",
-        }]})
+        path = _write_json(
+            {
+                "tasks": [
+                    {
+                        "id": "t1",
+                        "title": "A",
+                        "status": "planned",
+                    }
+                ]
+            }
+        )
         repo = JsonTaskRepository(path)
         task = repo.get("t1")
         task.rework_count = 3
@@ -99,10 +113,14 @@ class TestJsonTaskRepositorySave(unittest.TestCase):
         self.assertIsNone(repo.get("nope"))
 
     def test_all_returns_all_tasks(self):
-        path = _write_json({"tasks": [
-            {"id": "t1", "title": "A", "status": "planned"},
-            {"id": "t2", "title": "B", "status": "done"},
-        ]})
+        path = _write_json(
+            {
+                "tasks": [
+                    {"id": "t1", "title": "A", "status": "planned"},
+                    {"id": "t2", "title": "B", "status": "done"},
+                ]
+            }
+        )
         repo = JsonTaskRepository(path)
         os.unlink(path)
         self.assertEqual(len(repo.all()), 2)

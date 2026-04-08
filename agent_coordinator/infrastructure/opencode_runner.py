@@ -73,7 +73,7 @@ class OpenCodeRunner(AgentRunner):
                     session_id = event["sessionID"]
                 if event.get("type") == "error":
                     returncode = 1
-            except (json.JSONDecodeError, KeyError):
+            except (json.JSONDecodeError, KeyError):  # noqa: PERF203
                 pass
 
         if returncode != 0 and not text_parts:

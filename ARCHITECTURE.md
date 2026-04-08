@@ -85,8 +85,8 @@ Agent Coordinator follows **hexagonal architecture** (ports and adapters) with s
 │ │ FileStore                                           │ │
 │ │ - Read/write handoff.md                            │ │
 │ │ - Read/write tasks.json                            │ │
-│ │ - Append to workflow_events.jsonl                  │ │
-│ │ - Manage .coordinator_sessions.json                │ │
+│ │ - Append to .agent-coordinator/events.jsonl         │ │
+│ │ - Manage .agent-coordinator/sessions.json          │ │
 │ └────────────────────────────────────────────────────┘ │
 │                                                          │
 │ ┌────────────────────────────────────────────────────┐ │
@@ -174,7 +174,7 @@ ready_for_architect_review → rework_requested → in_engineering
 
 **Benefit**: Task status always reflects current workflow state. Rework cycles are tracked for escalation policy.
 
-### 5. Event Sourcing (workflow_events.jsonl)
+### 5. Event Sourcing (.agent-coordinator/events.jsonl)
 
 Every agent turn is logged as an immutable event:
 
@@ -204,7 +204,7 @@ Every agent turn is logged as an immutable event:
 5. Backend LLM generates response (ideally appends to handoff.md)
 6. CLI verifies handoff.md was updated
 7. TaskService syncs tasks.json based on new STATUS
-8. CLI appends event to workflow_events.jsonl
+8. CLI appends event to .agent-coordinator/events.jsonl
 9. Loop continues with step 1
 ```
 
@@ -372,14 +372,14 @@ def on_task_complete(task_id, status):
 
 - **Append-only handoff.md**: Agents can't rewrite history
 - **Session isolation**: Each agent has separate session ID
-- **Audit trail**: workflow_events.jsonl logs all actions
+- **Audit trail**: .agent-coordinator/events.jsonl logs all actions
 - **Human escalation**: needs_human status forces review
 
 ### Secrets Management
 
 - **Backend API keys**: Stored by backend CLIs (gh, opencode, claude), not by coordinator
 - **No secrets in code**: Coordinator never handles credentials
-- **Git-ignored**: .coordinator_sessions.json added to .gitignore
+- **Git-ignored**: .agent-coordinator/ directory added to .gitignore
 
 ## Performance Characteristics
 

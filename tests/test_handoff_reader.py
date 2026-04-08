@@ -1,13 +1,12 @@
 """Tests for src.infrastructure.handoff_reader (HandoffReader)."""
 
-import tempfile
 import os
+import tempfile
 import unittest
 from pathlib import Path
 
-from agent_coordinator.infrastructure.handoff_reader import HandoffReader
 from agent_coordinator.domain.models import HandoffStatus
-
+from agent_coordinator.infrastructure.handoff_reader import HandoffReader
 
 _VALID_BLOCK = """\
 ---HANDOFF---
@@ -30,17 +29,13 @@ _NO_BLOCKS = "# just prose\nnothing here.\n"
 
 
 def _write_tmp(content: str) -> Path:
-    tmp = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".md", delete=False, dir=tempfile.gettempdir()
-    )
-    tmp.write(content)
-    tmp.flush()
-    tmp.close()
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, dir=tempfile.gettempdir()) as tmp:
+        tmp.write(content)
+        tmp.flush()
     return Path(tmp.name)
 
 
 class TestHandoffReader(unittest.TestCase):
-
     def test_read_returns_message_for_valid_file(self):
         path = _write_tmp(_VALID_BLOCK)
         reader = HandoffReader(path)
@@ -71,8 +66,11 @@ class TestHandoffReader(unittest.TestCase):
         reader = HandoffReader(path)
         # Append a second block with a different status
         with path.open("a") as f:
-            f.write(_VALID_BLOCK.replace("STATUS: continue", "STATUS: plan_complete")
-                                .replace("NEXT: engineer", "NEXT: none"))
+            f.write(
+                _VALID_BLOCK.replace("STATUS: continue", "STATUS: plan_complete").replace(
+                    "NEXT: engineer", "NEXT: none"
+                )
+            )
         msg = reader.read()
         os.unlink(path)
         self.assertEqual(msg.status, HandoffStatus.PLAN_COMPLETE)

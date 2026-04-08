@@ -3,12 +3,11 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from agent_coordinator.infrastructure.human_prompt import (
-    _write_human_handoff,
     _prompt_tui,
-    _prompt_plain,
+    _write_human_handoff,
 )
 
 

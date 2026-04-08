@@ -46,8 +46,8 @@ After the coordinator runs, you'll also see:
 |---|---|
 | `plan.md` | The architect (implementation plan) |
 | `tetris.html` | The developer agent |
-| `workflow_events.jsonl` | Audit log of every agent turn |
-| `.coordinator_sessions.json` | Saved session IDs for continuity |
+| `.agent-coordinator/events.jsonl` | Audit log of every agent turn |
+| `.agent-coordinator/sessions.json` | Saved session IDs for continuity |
 
 ## Expected workflow
 

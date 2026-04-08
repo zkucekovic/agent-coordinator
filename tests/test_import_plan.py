@@ -8,16 +8,15 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from agent_coordinator.handoff_parser import extract_latest
 from agent_coordinator.helpers.import_plan import (
-    detect_doc_type,
-    extract_title,
-    extract_tasks_from_plan,
-    build_handoff_from_spec,
     build_handoff_from_plan,
+    build_handoff_from_spec,
+    detect_doc_type,
+    extract_tasks_from_plan,
+    extract_title,
     import_document,
 )
-from agent_coordinator.handoff_parser import extract_latest
-
 
 PLAN_PHASE_FORMAT = textwrap.dedent("""\
     # Implementation Plan — Auth Service
@@ -139,8 +138,16 @@ class TestExtractTasksPhaseFormat(unittest.TestCase):
 
     def test_required_fields_present(self):
         for t in self.tasks:
-            for field in ("id", "title", "status", "acceptance_criteria",
-                          "depends_on", "rework_count", "created_at", "updated_at"):
+            for field in (
+                "id",
+                "title",
+                "status",
+                "acceptance_criteria",
+                "depends_on",
+                "rework_count",
+                "created_at",
+                "updated_at",
+            ):
                 self.assertIn(field, t)
 
 

@@ -1,9 +1,9 @@
 """Tests for agent_coordinator/infrastructure/editor.py"""
+
 from __future__ import annotations
 
-import os
 import subprocess
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -15,8 +15,8 @@ from agent_coordinator.infrastructure.editor import (
     get_editor,
 )
 
-
 # ── get_editor ────────────────────────────────────────────────────────────────
+
 
 class TestGetEditor:
     def test_uses_visual_env(self, monkeypatch):
@@ -41,6 +41,7 @@ class TestGetEditor:
 
 
 # ── edit_text ─────────────────────────────────────────────────────────────────
+
 
 class TestEditText:
     def _mock_run(self):
@@ -101,9 +102,11 @@ class TestEditText:
         assert mock_run.call_args[0][0][0] == "vi"
 
     def test_subprocess_called_process_error_propagates(self):
-        with patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, "vi")):
-            with pytest.raises(subprocess.CalledProcessError):
-                edit_text("hello")
+        with (
+            patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, "vi")),
+            pytest.raises(subprocess.CalledProcessError),
+        ):
+            edit_text("hello")
 
     def test_comment_separator_blank_line_added(self):
         """When both comment_lines and initial_text are given, a blank line is added between them."""
@@ -119,6 +122,7 @@ class TestEditText:
 
 
 # ── edit_specification ────────────────────────────────────────────────────────
+
 
 class TestEditSpecification:
     def _make_spec_content(self) -> str:
@@ -182,11 +186,7 @@ class TestEditSpecification:
         assert result["constraints"] == []
 
     def test_unknown_section_stops_current_section(self):
-        content = (
-            "Title\n\n"
-            "## Description\n\nsome desc\n\n"
-            "## Other\n\nignored\n"
-        )
+        content = "Title\n\n## Description\n\nsome desc\n\n## Other\n\nignored\n"
         with patch(
             "agent_coordinator.infrastructure.editor.edit_text",
             return_value=content,
@@ -197,6 +197,7 @@ class TestEditSpecification:
 
 
 # ── edit_task ─────────────────────────────────────────────────────────────────
+
 
 class TestEditTask:
     def _make_task_content(self) -> str:
@@ -213,9 +214,7 @@ class TestEditTask:
             return_value=self._make_task_content(),
         ):
             result = edit_task()
-        assert set(result.keys()) == {
-            "id", "title", "description", "acceptance_criteria", "dependencies"
-        }
+        assert set(result.keys()) == {"id", "title", "description", "acceptance_criteria", "dependencies"}
 
     def test_parses_id_and_title(self):
         with patch(
@@ -272,12 +271,7 @@ class TestEditTask:
         assert result["dependencies"] == []
 
     def test_unknown_section_resets_current_section(self):
-        content = (
-            "task-002: Fix bug\n\n"
-            "desc line\n\n"
-            "## Unknown Section\n\n"
-            "- should not appear in criteria\n"
-        )
+        content = "task-002: Fix bug\n\ndesc line\n\n## Unknown Section\n\n- should not appear in criteria\n"
         with patch(
             "agent_coordinator.infrastructure.editor.edit_text",
             return_value=content,
@@ -287,6 +281,7 @@ class TestEditTask:
 
 
 # ── edit_handoff_message ──────────────────────────────────────────────────────
+
 
 class TestEditHandoffMessage:
     def test_returns_string(self):

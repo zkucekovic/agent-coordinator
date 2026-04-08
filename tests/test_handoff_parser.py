@@ -1,8 +1,9 @@
 """Tests for src.handoff_parser."""
 
 import unittest
-from agent_coordinator.handoff_parser import parse_block, extract_latest
-from agent_coordinator.models import HandoffStatus, HandoffMessage
+
+from agent_coordinator.handoff_parser import extract_latest, parse_block
+from agent_coordinator.models import HandoffMessage, HandoffStatus
 
 VALID_ARCHITECT_BLOCK = """
 ROLE: architect
@@ -73,8 +74,7 @@ MULTI_BLOCK_CONTENT = (
 )
 
 INVALID_THEN_VALID_CONTENT = (
-    "---HANDOFF---\n" + MISSING_NEXT_BLOCK + "\n---END---\n\n"
-    "---HANDOFF---\n" + VALID_ARCHITECT_BLOCK + "\n---END---\n"
+    "---HANDOFF---\n" + MISSING_NEXT_BLOCK + "\n---END---\n\n---HANDOFF---\n" + VALID_ARCHITECT_BLOCK + "\n---END---\n"
 )
 
 SINGLE_VALID_CONTENT = "---HANDOFF---\n" + VALID_ARCHITECT_BLOCK + "\n---END---\n"
@@ -82,7 +82,6 @@ NO_BLOCKS_CONTENT = "# just prose\nno blocks here\n"
 
 
 class TestParseBlock(unittest.TestCase):
-
     def test_valid_architect_block(self):
         msg, errors = parse_block(VALID_ARCHITECT_BLOCK)
         self.assertIsInstance(msg, HandoffMessage)
@@ -119,7 +118,6 @@ class TestParseBlock(unittest.TestCase):
 
 
 class TestExtractLatest(unittest.TestCase):
-
     def test_single_valid_block(self):
         msg, errors = extract_latest(SINGLE_VALID_CONTENT)
         self.assertIsInstance(msg, HandoffMessage)
@@ -145,5 +143,5 @@ class TestExtractLatest(unittest.TestCase):
         self.assertEqual(msg.role, "architect")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

@@ -1,7 +1,6 @@
 """Tests for src.application.prompt_builder (PromptBuilder)."""
 
 import tempfile
-import os
 import unittest
 from pathlib import Path
 
@@ -19,13 +18,13 @@ def _make_workspace() -> Path:
 
 
 class TestPromptBuilder(unittest.TestCase):
-
     def setUp(self):
         self._workspace = _make_workspace()
         self._builder = PromptBuilder()
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self._workspace, ignore_errors=True)
 
     def _cfg(self) -> dict:
@@ -85,8 +84,10 @@ class TestPromptBuilder(unittest.TestCase):
 
     def test_rework_note_shown_when_rework_count_positive(self):
         task = Task(
-            id="task-001", title="Build parser",
-            status=TaskStatus.REWORK_REQUESTED, rework_count=2,
+            id="task-001",
+            title="Build parser",
+            status=TaskStatus.REWORK_REQUESTED,
+            rework_count=2,
         )
         prompt = self._builder.build(
             role="architect",
@@ -148,6 +149,7 @@ class TestPromptBuilder(unittest.TestCase):
             self.assertIn("Coordinator rules.", prompt)
         finally:
             import shutil
+
             shutil.rmtree(coord_dir, ignore_errors=True)
 
     def test_workspace_prompt_used_when_no_coordinator_dir(self):
@@ -177,6 +179,7 @@ class TestPromptBuilder(unittest.TestCase):
             self.assertIn("You are the architect.", prompt)
         finally:
             import shutil
+
             shutil.rmtree(coord_dir, ignore_errors=True)
 
     def test_project_rules_loaded_from_workspace(self):

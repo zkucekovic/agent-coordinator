@@ -27,7 +27,6 @@ from agent_coordinator.helpers.import_plan import (
     import_document,
 )
 
-
 SPEC_CONTENT = textwrap.dedent("""\
     # User Authentication
 
@@ -210,11 +209,7 @@ class TestExtractBulletsNumberedList(unittest.TestCase):
         self.assertIn("numbered item", result)
 
     def test_numbered_with_section_hint(self):
-        text = (
-            "## Acceptance\n"
-            "1. Passes tests\n"
-            "2. No regressions\n"
-        )
+        text = "## Acceptance\n1. Passes tests\n2. No regressions\n"
         result = _extract_bullets(text, section_hint="acceptance")
         self.assertIn("Passes tests", result)
         self.assertIn("No regressions", result)

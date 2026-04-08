@@ -13,7 +13,6 @@ def _tmp_path() -> Path:
 
 
 class TestSessionStore(unittest.TestCase):
-
     def setUp(self):
         self._path = _tmp_path()
 
