@@ -61,9 +61,9 @@ class StartupCLI:
         from agent_coordinator.infrastructure.tui import create_display
 
         display = screen or create_display()
-        if not isinstance(display, Screen):
+        if not hasattr(display, "_append_content"):
             raise RuntimeError("StartupCLI requires a TTY-capable Screen display")
-        self._screen: Screen = display
+        self._screen: Screen = display  # type: ignore[assignment]
         if _RL:
             _setup_readline([c.name for c in COMMANDS])
 
