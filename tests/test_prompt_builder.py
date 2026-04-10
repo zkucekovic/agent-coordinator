@@ -283,6 +283,124 @@ class TestPromptBuilder(unittest.TestCase):
         self.assertNotIn("Project Specification", prompt)
         self.assertNotIn("Implementation Plan", prompt)
 
+    def test_specs_directory_loads_all_md_files(self):
+        """specs/ directory: all .md files are injected on first turn."""
+        specs_dir = self._workspace / "specs"
+        specs_dir.mkdir()
+        (specs_dir / "auth.md").write_text("Auth spec content.")
+        (specs_dir / "payments.md").write_text("Payments spec content.")
+        prompt = self._builder.build(
+            role="architect",
+            workspace=self._workspace,
+            handoff_content="",
+            agent_cfg=self._cfg(),
+            first_turn=True,
+        )
+        self.assertIn("Auth spec content.", prompt)
+        self.assertIn("Payments spec content.", prompt)
+        self.assertIn("Project Specification", prompt)
+
+    def test_plans_directory_loads_all_md_files(self):
+        """plans/ directory: all .md files are injected on first turn."""
+        plans_dir = self._workspace / "plans"
+        plans_dir.mkdir()
+        (plans_dir / "phase1.md").write_text("Phase 1 plan.")
+        (plans_dir / "phase2.md").write_text("Phase 2 plan.")
+        prompt = self._builder.build(
+            role="architect",
+            workspace=self._workspace,
+            handoff_content="",
+            agent_cfg=self._cfg(),
+            first_turn=True,
+        )
+        self.assertIn("Phase 1 plan.", prompt)
+        self.assertIn("Phase 2 plan.", prompt)
+        self.assertIn("Implementation Plan", prompt)
+
+    def test_specs_dir_takes_priority_over_single_spec_file(self):
+        """specs/ directory takes priority over a root SPECIFICATION.md file."""
+        (self._workspace / "SPECIFICATION.md").write_text("Root spec — should be ignored.")
+        specs_dir = self._workspace / "specs"
+        specs_dir.mkdir()
+        (specs_dir / "api.md").write_text("API spec from directory.")
+        prompt = self._builder.build(
+            role="architect",
+            workspace=self._workspace,
+            handoff_content="",
+            agent_cfg=self._cfg(),
+            first_turn=True,
+        )
+        self.assertIn("API spec from directory.", prompt)
+        self.assertNotIn("Root spec — should be ignored.", prompt)
+
+    def test_specs_dir_falls_back_to_root_file_when_dir_absent(self):
+        """Falls back to SPECIFICATION.md when no specs directory exists."""
+        (self._workspace / "SPECIFICATION.md").write_text("Fallback root spec.")
+        prompt = self._builder.build(
+            role="architect",
+            workspace=self._workspace,
+            handoff_content="",
+            agent_cfg=self._cfg(),
+            first_turn=True,
+        )
+        self.assertIn("Fallback root spec.", prompt)
+
+    def test_specs_dir_alternative_names_detected(self):
+        """spec/ and specifications/ directories are also recognised."""
+        spec_dir = self._workspace / "specifications"
+        spec_dir.mkdir()
+        (spec_dir / "overview.md").write_text("Overview spec.")
+        prompt = self._builder.build(
+            role="architect",
+            workspace=self._workspace,
+            handoff_content="",
+            agent_cfg=self._cfg(),
+            first_turn=True,
+        )
+        self.assertIn("Overview spec.", prompt)
+
+    def test_plans_dir_alternative_names_detected(self):
+        """plan/ and implementation_plans/ directories are also recognised."""
+        plans_dir = self._workspace / "implementation_plans"
+        plans_dir.mkdir()
+        (plans_dir / "milestone1.md").write_text("Milestone 1.")
+        prompt = self._builder.build(
+            role="architect",
+            workspace=self._workspace,
+            handoff_content="",
+            agent_cfg=self._cfg(),
+            first_turn=True,
+        )
+        self.assertIn("Milestone 1.", prompt)
+
+    def test_directory_docs_not_on_subsequent_turns(self):
+        """Files in specs/ and plans/ are only injected on first turn."""
+        specs_dir = self._workspace / "specs"
+        specs_dir.mkdir()
+        (specs_dir / "auth.md").write_text("Auth spec content.")
+        prompt = self._builder.build(
+            role="architect",
+            workspace=self._workspace,
+            handoff_content="",
+            agent_cfg=self._cfg(),
+            first_turn=False,
+        )
+        self.assertNotIn("Auth spec content.", prompt)
+
+    def test_specs_directory_section_includes_relative_path(self):
+        """Section header includes the file's relative path for traceability."""
+        specs_dir = self._workspace / "specs"
+        specs_dir.mkdir()
+        (specs_dir / "core.md").write_text("Core spec.")
+        prompt = self._builder.build(
+            role="architect",
+            workspace=self._workspace,
+            handoff_content="",
+            agent_cfg=self._cfg(),
+            first_turn=True,
+        )
+        self.assertIn("specs/core.md", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

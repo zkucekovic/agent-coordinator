@@ -117,11 +117,14 @@ class PromptBuilder:
     def _load_project_docs(self, workspace: Path) -> str:
         """Load specification and plan files from the workspace if present.
 
-        Looks for common naming conventions: SPECIFICATION.md, spec.md,
-        IMPLEMENTATION_PLAN.md, plan.md, etc. Returns concatenated content
-        with section headers.
+        Checks for spec/plan directories first (loading all .md files within),
+        then falls back to single well-known filenames at the workspace root.
+        Returns concatenated content with section headers.
         """
-        spec_names = (
+        spec_dirs = ("specs", "spec", "specifications")
+        plan_dirs = ("plans", "plan", "implementation_plans")
+
+        spec_file_names = (
             "SPECIFICATION.md",
             "specification.md",
             "spec.md",
@@ -131,7 +134,7 @@ class PromptBuilder:
             "requirements.md",
             "REQUIREMENTS.md",
         )
-        plan_names = (
+        plan_file_names = (
             "IMPLEMENTATION_PLAN.md",
             "implementation_plan.md",
             "plan.md",
@@ -140,19 +143,42 @@ class PromptBuilder:
 
         sections: list[str] = []
 
-        for name in spec_names:
-            path = workspace / name
-            if path.exists():
-                sections.append(f"## Project Specification (from {name})\n\n{path.read_text().strip()}")
-                break
+        spec_files = self._find_docs_in_dirs(workspace, spec_dirs)
+        if spec_files:
+            for path in spec_files:
+                sections.append(
+                    f"## Project Specification (from {path.relative_to(workspace)})\n\n{path.read_text().strip()}"
+                )
+        else:
+            for name in spec_file_names:
+                path = workspace / name
+                if path.exists():
+                    sections.append(f"## Project Specification (from {name})\n\n{path.read_text().strip()}")
+                    break
 
-        for name in plan_names:
-            path = workspace / name
-            if path.exists():
-                sections.append(f"## Implementation Plan (from {name})\n\n{path.read_text().strip()}")
-                break
+        plan_files = self._find_docs_in_dirs(workspace, plan_dirs)
+        if plan_files:
+            for path in plan_files:
+                sections.append(
+                    f"## Implementation Plan (from {path.relative_to(workspace)})\n\n{path.read_text().strip()}"
+                )
+        else:
+            for name in plan_file_names:
+                path = workspace / name
+                if path.exists():
+                    sections.append(f"## Implementation Plan (from {name})\n\n{path.read_text().strip()}")
+                    break
 
         return "\n\n---\n\n".join(sections)
+
+    @staticmethod
+    def _find_docs_in_dirs(workspace: Path, dir_names: tuple[str, ...]) -> list[Path]:
+        """Return sorted .md files from the first matching directory in workspace."""
+        for name in dir_names:
+            d = workspace / name
+            if d.is_dir():
+                return sorted(p for p in d.rglob("*.md") if p.is_file())
+        return []
 
     @staticmethod
     def _task_context(task: Task | None) -> str:

@@ -303,6 +303,197 @@ BLOCKERS:
 """
 
 
+# ── Handoff builders for folder imports ──────────────────────────────────────
+
+
+def build_handoff_from_specs_folder(files: list[Path], workspace: Path) -> str:
+    """Create the initial handoff block after importing a specs directory."""
+    rel = [str(f.relative_to(workspace)) for f in files]
+    listing = "\n".join(f"- {r}" for r in rel)
+    return f"""\
+## {datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")} — Import
+
+Specifications imported into specs/:
+{listing}
+
+---HANDOFF---
+ROLE: human
+STATUS: continue
+NEXT: architect
+TASK_ID: task-000
+TITLE: Specifications imported
+SUMMARY: Multiple specification files have been imported into the specs/ directory. Read each file carefully, write an implementation plan to plan.md, decompose the work into tasks in tasks.json, and assign the first task to the developer.
+ACCEPTANCE:
+- All files in specs/ have been read and understood
+- Implementation plan written to plan.md
+- Tasks decomposed into tasks.json with acceptance criteria
+- First task assigned to developer
+CONSTRAINTS:
+- Follow all requirements found in specs/
+FILES_TO_TOUCH:
+- handoff.md
+- plan.md
+- tasks.json
+CHANGED_FILES:
+- n/a
+VALIDATION:
+- n/a
+BLOCKERS:
+- none
+---END---
+"""
+
+
+def build_handoff_from_plans_folder(files: list[Path], workspace: Path, tasks: list[dict[str, Any]]) -> str:
+    """Create the initial handoff block after importing a plans directory."""
+    rel = [str(f.relative_to(workspace)) for f in files]
+    listing = "\n".join(f"- {r}" for r in rel)
+    task_count = len(tasks)
+    first_task = tasks[0] if tasks else None
+    first_task_id = first_task["id"] if first_task else "task-001"
+    first_task_title = first_task["title"] if first_task else "first task"
+    task_summary = (
+        f"{task_count} tasks imported ({', '.join(t['id'] for t in tasks[:5])}"
+        + (", …" if task_count > 5 else "")
+        + ")"
+        if tasks
+        else "no tasks detected — decompose manually"
+    )
+    return f"""\
+## {datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")} — Import
+
+Implementation plans imported into plans/:
+{listing}
+Tasks loaded into tasks.json: {task_summary}
+
+---HANDOFF---
+ROLE: human
+STATUS: continue
+NEXT: architect
+TASK_ID: {first_task_id}
+TITLE: Implementation plans imported
+SUMMARY: Implementation plan files have been imported into the plans/ directory and tasks have been loaded into tasks.json. Read every file in plans/ and tasks.json to understand the full scope. Assign {first_task_id} ({first_task_title}) to the developer with explicit acceptance criteria. Work through all tasks in order.
+ACCEPTANCE:
+- All files in plans/ have been read and understood
+- tasks.json reflects the imported task list
+- First task assigned to developer with explicit acceptance criteria
+CONSTRAINTS:
+- Work through tasks in the order defined in plans/
+- Do not skip tasks or combine multiple tasks in one turn
+FILES_TO_TOUCH:
+- handoff.md
+- tasks.json
+CHANGED_FILES:
+- n/a
+VALIDATION:
+- n/a
+BLOCKERS:
+- none
+---END---
+"""
+
+
+# ── Folder import ─────────────────────────────────────────────────────────────
+
+
+def import_folder(
+    source: Path,
+    workspace: Path,
+    doc_type: str,
+    force: bool = False,
+    no_handoff: bool = False,
+    no_tasks: bool = False,
+    verbose: bool = True,
+    interactive: bool = True,
+) -> None:
+    """Import all .md files from *source* (a directory or single file) into the
+    appropriate subdirectory of the workspace.
+
+    ``doc_type`` must be ``'spec'`` or ``'plan'``.  Files are written to
+    ``<workspace>/specs/`` or ``<workspace>/plans/`` respectively.
+    Tasks are extracted from every plan file and merged into ``tasks.json``.
+    """
+    if doc_type not in ("spec", "plan"):
+        raise ValueError(f"doc_type must be 'spec' or 'plan', got {doc_type!r}")
+
+    subdir_name = "specs" if doc_type == "spec" else "plans"
+    dest_dir = workspace / subdir_name
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    # Collect source files
+    if source.is_dir():
+        source_files = sorted(p for p in source.rglob("*.md") if p.is_file())
+    elif source.is_file():
+        source_files = [source]
+    else:
+        print(f"ERROR: Path not found: {source}")
+        sys.exit(1)
+
+    if not source_files:
+        if verbose:
+            print(f"  No .md files found in {source}")
+        return
+
+    written: list[Path] = []
+    for src_file in source_files:
+        # Preserve relative structure when source is a directory
+        if source.is_dir():
+            rel = src_file.relative_to(source)
+        else:
+            rel = Path(src_file.name)
+        dest_file = dest_dir / rel
+        dest_file.parent.mkdir(parents=True, exist_ok=True)
+        _write_file(dest_file, src_file.read_text(encoding="utf-8"), force, verbose, interactive)
+        if dest_file.exists():
+            written.append(dest_file)
+
+    if doc_type == "plan" and not no_tasks:
+        all_tasks: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        for dest_file in sorted(dest_dir.rglob("*.md")):
+            for task in extract_tasks_from_plan(dest_file.read_text(encoding="utf-8")):
+                if task["id"] not in seen_ids:
+                    all_tasks.append(task)
+                    seen_ids.add(task["id"])
+        if all_tasks:
+            if verbose:
+                print(f"  Extracted {len(all_tasks)} task(s) from plans/")
+            tasks_path = workspace / "tasks.json"
+            _write_file(
+                tasks_path,
+                json.dumps(build_tasks_json(all_tasks), indent=2),
+                force,
+                verbose,
+                interactive,
+            )
+        elif verbose:
+            print("  No tasks detected in imported plan files")
+
+    if not no_handoff:
+        handoff_path = workspace / "handoff.md"
+        dest_files = sorted(dest_dir.rglob("*.md"))
+        if handoff_path.exists() and not force:
+            if verbose:
+                print(f"  Skipped: {handoff_path} already exists (use --force to overwrite)")
+        else:
+            if doc_type == "spec":
+                handoff = build_handoff_from_specs_folder(dest_files, workspace)
+            else:
+                all_tasks_for_hoff = []
+                tasks_path = workspace / "tasks.json"
+                if tasks_path.exists():
+                    import json as _json
+                    data = _json.loads(tasks_path.read_text())
+                    all_tasks_for_hoff = data.get("tasks", [])
+                handoff = build_handoff_from_plans_folder(dest_files, workspace, all_tasks_for_hoff)
+            _write_file(handoff_path, handoff, force, verbose, interactive)
+
+    if verbose:
+        print()
+        print(f"  Imported {len(source_files)} file(s) → {dest_dir}")
+        print(f"  Next:   agent-coordinator --workspace {workspace}")
+
+
 # ── Import orchestration ───────────────────────────────────────────────────────
 
 

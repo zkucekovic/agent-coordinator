@@ -1287,6 +1287,8 @@ def main() -> None:
 Examples:
   agent-coordinator                                    # interactive startup menu
   agent-coordinator --import SPECIFICATION.md          # import spec
+  agent-coordinator --import-specs ./specs/            # import folder of specs
+  agent-coordinator --import-plans ./plans/            # import folder of plans
   agent-coordinator --workspace ./my-project           # run coordinator
   agent-coordinator --workspace ./my-feature --reset   # reset sessions
 """,
@@ -1334,12 +1336,26 @@ Examples:
     parser.add_argument("--force", action="store_true", help="Overwrite existing files when importing")
     parser.add_argument("--no-handoff", action="store_true", help="Skip creating handoff.md when importing")
     parser.add_argument("--no-tasks", action="store_true", help="Skip creating tasks.json when importing a plan")
+    parser.add_argument(
+        "--import-specs",
+        dest="import_specs",
+        type=Path,
+        metavar="PATH",
+        help="Import a directory (or file) of specification docs into <workspace>/specs/",
+    )
+    parser.add_argument(
+        "--import-plans",
+        dest="import_plans",
+        type=Path,
+        metavar="PATH",
+        help="Import a directory (or file) of implementation plans into <workspace>/plans/",
+    )
 
     args = parser.parse_args()
 
     # ── Startup CLI (no explicit workspace or import given) ───────────────────
     _explicit_workspace = "--workspace" in sys.argv or "-w" in sys.argv
-    _has_action = args.import_file or _explicit_workspace or args.reset
+    _has_action = args.import_file or args.import_specs or args.import_plans or _explicit_workspace or args.reset
 
     workspace = args.workspace.resolve()
 
@@ -1363,6 +1379,49 @@ Examples:
         )
         if not args.quiet:
             print()
+            print("Done. Run the coordinator to start:")
+            print(f"  agent-coordinator --workspace {workspace}")
+        return
+
+    if args.import_specs:
+        from agent_coordinator.helpers.import_plan import import_folder
+
+        source = args.import_specs.resolve()
+        if not args.quiet:
+            print(f"\nImporting specs from: {source}")
+            print(f"Workspace: {workspace}")
+            print()
+        import_folder(
+            source=source,
+            workspace=workspace,
+            doc_type="spec",
+            force=args.force,
+            no_handoff=args.no_handoff,
+            verbose=not args.quiet,
+        )
+        if not args.quiet:
+            print("Done. Run the coordinator to start:")
+            print(f"  agent-coordinator --workspace {workspace}")
+        return
+
+    if args.import_plans:
+        from agent_coordinator.helpers.import_plan import import_folder
+
+        source = args.import_plans.resolve()
+        if not args.quiet:
+            print(f"\nImporting plans from: {source}")
+            print(f"Workspace: {workspace}")
+            print()
+        import_folder(
+            source=source,
+            workspace=workspace,
+            doc_type="plan",
+            force=args.force,
+            no_handoff=args.no_handoff,
+            no_tasks=args.no_tasks,
+            verbose=not args.quiet,
+        )
+        if not args.quiet:
             print("Done. Run the coordinator to start:")
             print(f"  agent-coordinator --workspace {workspace}")
         return

@@ -343,5 +343,173 @@ class TestImportDocumentNoHandoff(unittest.TestCase):
             self.assertTrue((workspace / "handoff.md").exists())
 
 
+class TestImportFolder(unittest.TestCase):
+    """Tests for import_folder — directory-based spec/plan imports."""
+
+    from agent_coordinator.helpers.import_plan import import_folder as _import_folder_fn
+
+    def _import(self, source, workspace, doc_type, **kwargs):
+        from agent_coordinator.helpers.import_plan import import_folder
+
+        import_folder(source=source, workspace=workspace, doc_type=doc_type, interactive=False, verbose=False, **kwargs)
+
+    # ── specs ─────────────────────────────────────────────────────────────────
+
+    def test_spec_dir_copies_md_files_to_specs_subdir(self):
+        with TemporaryDirectory() as tmp:
+            src = Path(tmp) / "my_specs"
+            src.mkdir()
+            (src / "auth.md").write_text("# Auth\nAuth spec.")
+            (src / "payments.md").write_text("# Payments\nPayments spec.")
+            workspace = Path(tmp) / "ws"
+
+            self._import(src, workspace, doc_type="spec", no_handoff=True)
+
+            self.assertTrue((workspace / "specs" / "auth.md").exists())
+            self.assertTrue((workspace / "specs" / "payments.md").exists())
+
+    def test_spec_single_file_copied_to_specs_subdir(self):
+        with TemporaryDirectory() as tmp:
+            src = Path(tmp) / "overview.md"
+            src.write_text("# Overview\nOverview spec.")
+            workspace = Path(tmp) / "ws"
+
+            self._import(src, workspace, doc_type="spec", no_handoff=True)
+
+            self.assertTrue((workspace / "specs" / "overview.md").exists())
+
+    def test_spec_dir_creates_handoff(self):
+        with TemporaryDirectory() as tmp:
+            src = Path(tmp) / "specs_src"
+            src.mkdir()
+            (src / "spec1.md").write_text("# Spec 1\nContent.")
+            workspace = Path(tmp) / "ws"
+
+            self._import(src, workspace, doc_type="spec")
+
+            self.assertTrue((workspace / "handoff.md").exists())
+            content = (workspace / "handoff.md").read_text()
+            self.assertIn("specs/", content)
+            self.assertIn("NEXT: architect", content)
+
+    def test_spec_dir_no_handoff_flag(self):
+        with TemporaryDirectory() as tmp:
+            src = Path(tmp) / "specs_src"
+            src.mkdir()
+            (src / "spec1.md").write_text("# Spec 1\nContent.")
+            workspace = Path(tmp) / "ws"
+
+            self._import(src, workspace, doc_type="spec", no_handoff=True)
+
+            self.assertFalse((workspace / "handoff.md").exists())
+
+    def test_spec_dir_preserves_subdirectory_structure(self):
+        with TemporaryDirectory() as tmp:
+            src = Path(tmp) / "specs_src"
+            sub = src / "sub"
+            sub.mkdir(parents=True)
+            (sub / "deep.md").write_text("# Deep\nDeep spec.")
+            workspace = Path(tmp) / "ws"
+
+            self._import(src, workspace, doc_type="spec", no_handoff=True)
+
+            self.assertTrue((workspace / "specs" / "sub" / "deep.md").exists())
+
+    def test_spec_dir_force_overwrites_existing(self):
+        with TemporaryDirectory() as tmp:
+            src = Path(tmp) / "specs_src"
+            src.mkdir()
+            (src / "spec1.md").write_text("# Updated\nNew content.")
+            workspace = Path(tmp) / "ws"
+            (workspace / "specs").mkdir(parents=True)
+            (workspace / "specs" / "spec1.md").write_text("Old content.")
+
+            self._import(src, workspace, doc_type="spec", force=True, no_handoff=True)
+
+            self.assertIn("New content.", (workspace / "specs" / "spec1.md").read_text())
+
+    # ── plans ─────────────────────────────────────────────────────────────────
+
+    def test_plan_dir_copies_md_files_to_plans_subdir(self):
+        with TemporaryDirectory() as tmp:
+            src = Path(tmp) / "my_plans"
+            src.mkdir()
+            (src / "phase1.md").write_text("# Phase 1\n## task-001: Do thing\nDo it.")
+            (src / "phase2.md").write_text("# Phase 2\n## task-002: Do other\nDo it.")
+            workspace = Path(tmp) / "ws"
+
+            self._import(src, workspace, doc_type="plan", no_handoff=True)
+
+            self.assertTrue((workspace / "plans" / "phase1.md").exists())
+            self.assertTrue((workspace / "plans" / "phase2.md").exists())
+
+    def test_plan_dir_extracts_tasks_from_all_files(self):
+        with TemporaryDirectory() as tmp:
+            src = Path(tmp) / "my_plans"
+            src.mkdir()
+            (src / "phase1.md").write_text("## task-001: Alpha\nDo alpha.")
+            (src / "phase2.md").write_text("## task-002: Beta\nDo beta.")
+            workspace = Path(tmp) / "ws"
+
+            self._import(src, workspace, doc_type="plan", no_handoff=True)
+
+            import json
+
+            data = json.loads((workspace / "tasks.json").read_text())
+            ids = [t["id"] for t in data["tasks"]]
+            self.assertIn("task-001", ids)
+            self.assertIn("task-002", ids)
+
+    def test_plan_dir_no_tasks_flag_skips_tasks_json(self):
+        with TemporaryDirectory() as tmp:
+            src = Path(tmp) / "my_plans"
+            src.mkdir()
+            (src / "plan.md").write_text("## task-001: Alpha\nDo alpha.")
+            workspace = Path(tmp) / "ws"
+
+            self._import(src, workspace, doc_type="plan", no_tasks=True, no_handoff=True)
+
+            self.assertFalse((workspace / "tasks.json").exists())
+
+    def test_plan_dir_creates_handoff_with_next_architect(self):
+        with TemporaryDirectory() as tmp:
+            src = Path(tmp) / "my_plans"
+            src.mkdir()
+            (src / "plan.md").write_text("## task-001: Alpha\nDo alpha.")
+            workspace = Path(tmp) / "ws"
+
+            self._import(src, workspace, doc_type="plan")
+
+            content = (workspace / "handoff.md").read_text()
+            self.assertIn("NEXT: architect", content)
+            self.assertIn("plans/", content)
+
+    def test_plan_deduplicates_task_ids_across_files(self):
+        with TemporaryDirectory() as tmp:
+            src = Path(tmp) / "my_plans"
+            src.mkdir()
+            (src / "a.md").write_text("## task-001: Alpha\nDo alpha.")
+            (src / "b.md").write_text("## task-001: Duplicate\nAlso task 1.")
+            workspace = Path(tmp) / "ws"
+
+            self._import(src, workspace, doc_type="plan", no_handoff=True)
+
+            import json
+
+            data = json.loads((workspace / "tasks.json").read_text())
+            ids = [t["id"] for t in data["tasks"]]
+            self.assertEqual(ids.count("task-001"), 1)
+
+    def test_invalid_doc_type_raises(self):
+        with TemporaryDirectory() as tmp:
+            src = Path(tmp) / "src"
+            src.mkdir()
+            workspace = Path(tmp) / "ws"
+            from agent_coordinator.helpers.import_plan import import_folder
+
+            with self.assertRaises(ValueError):
+                import_folder(source=src, workspace=workspace, doc_type="unknown", interactive=False, verbose=False)
+
+
 if __name__ == "__main__":
     unittest.main()
