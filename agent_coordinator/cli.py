@@ -1084,9 +1084,21 @@ BLOCKERS:
                 "on_exceed": "needs_human",
             },
             "agents": {
-                "architect": {"prompt_file": "prompts/architect.md"},
-                "developer": {"prompt_file": "prompts/developer.md"},
-                "qa_engineer": {"prompt_file": "prompts/qa_engineer.md"},
+                "architect": {
+                    "prompt_file": "prompts/architect.md",
+                    "backend": "copilot",
+                    "model": "claude-sonnet-4.6",
+                },
+                "developer": {
+                    "prompt_file": "prompts/developer.md",
+                    "backend": "copilot",
+                    "model": "claude-sonnet-4.6",
+                },
+                "qa_engineer": {
+                    "prompt_file": "prompts/qa_engineer.md",
+                    "backend": "copilot",
+                    "model": "claude-sonnet-4.6",
+                },
             },
         }
         agents_path.write_text(json.dumps(default_agents_cfg, indent=4))
