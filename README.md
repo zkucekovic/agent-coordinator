@@ -30,20 +30,99 @@ Requires Python 3.10+. Install whichever backend CLI you plan to use.
 
 ## Quick start
 
+### Option A — Start from scratch
+
 ```bash
-# Import a spec and run
-agent-coordinator --import SPECIFICATION.md --workspace ./my-project
-agent-coordinator --workspace ./my-project
-
-# Or import a plan with tasks already defined
-agent-coordinator --import plan.md --workspace ./my-project
-agent-coordinator --workspace ./my-project
-
-# Or start from scratch — the coordinator creates an initial handoff
+# Initialise a new workspace (creates handoff.md + agents.json automatically)
 agent-coordinator --workspace ./my-project
 ```
 
-The default workflow: **architect** plans and reviews, **developer** implements, **QA engineer** validates.
+The coordinator creates two files in `./my-project/`:
+
+**`agents.json`** — ready to run, no editing needed:
+```json
+{
+  "default_backend": "copilot",
+  "retry_policy": { "max_rework": 3, "on_exceed": "needs_human" },
+  "agents": {
+    "architect":   { "backend": "copilot", "model": "claude-sonnet-4.6", "prompt_file": "prompts/architect.md" },
+    "developer":   { "backend": "copilot", "model": "claude-sonnet-4.6", "prompt_file": "prompts/developer.md" },
+    "qa_engineer": { "backend": "copilot", "model": "claude-sonnet-4.6", "prompt_file": "prompts/qa_engineer.md" }
+  }
+}
+```
+
+**`handoff.md`** — initial handoff directing the architect to start planning.
+
+Then drop in your project context and hit **Start**:
+
+```bash
+# Add a spec and/or plan (optional — agents will work from handoff.md otherwise)
+cp SPECIFICATION.md ./my-project/
+cp plan.md ./my-project/
+
+# Run — the startup menu appears; press Enter to start
+agent-coordinator --workspace ./my-project
+```
+
+---
+
+### Option B — Import specs and plans, then run
+
+Import your existing documents and let the architect pick up immediately:
+
+```bash
+# Import a single spec or plan (auto-detected)
+agent-coordinator --import SPECIFICATION.md --workspace ./my-project
+agent-coordinator --import plan.md --workspace ./my-project
+
+# Import entire folders
+agent-coordinator --import-specs ./specs/ --workspace ./my-project
+agent-coordinator --import-plans ./plans/ --workspace ./my-project
+
+# Then start the coordinator
+agent-coordinator --workspace ./my-project
+```
+
+On first run the coordinator injects all spec/plan files into the architect's prompt. The architect reads them, decomposes the work into `tasks.json`, and hands off task-001 to the developer.
+
+---
+
+### The development loop
+
+Once running, each turn follows this cycle:
+
+```
+architect  →  reads spec/plan, creates tasks.json, assigns task-001 to developer
+developer  →  implements the task, writes code, updates handoff.md (STATUS: review_required)
+architect  →  reviews the work (STATUS: approved or rework_required)
+qa_engineer → validates, runs tests, writes handoff.md (STATUS: continue or blocked)
+              ↑ repeat for each task
+```
+
+**Working through a task list:**
+
+The coordinator tracks `tasks.json` automatically. After each approved task the architect assigns the next one. You can watch progress live in the TUI or check `tasks.json`:
+
+```json
+{ "id": "task-001", "title": "...", "status": "done" },
+{ "id": "task-002", "title": "...", "status": "in_engineering" },
+{ "id": "task-003", "title": "...", "status": "planned" }
+```
+
+To skip to a specific task or add context, press **Ctrl+C** → **m** (add message to handoff) and type your instruction.
+
+---
+
+### Skip the menu — run immediately
+
+```bash
+agent-coordinator --workspace ./my-project --auto          # skip startup menu
+agent-coordinator --workspace ./my-project --max-turns 20  # stop after 20 turns
+agent-coordinator --workspace ./my-project --reset         # clear sessions and restart
+```
+
+
 
 ## How it works
 
@@ -123,23 +202,32 @@ Each agent can use a different backend. Built-in: `copilot`, `claude`, `opencode
 | Flag | Default | Description |
 |---|---|---|
 | `--workspace PATH` | `.` (cwd) | Directory with handoff.md and project files |
-| `--max-turns N` | `30` | Stop after N agent turns |
+| `--max-turns N` | `0` (unlimited) | Stop after N agent turns (0 = run until done) |
 | `--reset` | | Clear saved sessions and start fresh |
+| `--auto` | | Skip the startup menu and run immediately |
 | `--quiet` | | Suppress TUI output |
 | `--output-lines N` | `10` | Agent output lines shown in TUI |
 | `--no-streaming` | | Show output all at once instead of streaming |
 | `--stateless` | | Run agents without session persistence (fresh context every turn) |
-| `--import FILE` | | Import a specification or plan into workspace |
-| `--type spec\|plan` | auto | Force document type when importing |
+| `--import FILE` | | Import a single specification or plan file into workspace |
+| `--import-specs PATH` | | Import a directory (or file) of specs into `<workspace>/specs/` |
+| `--import-plans PATH` | | Import a directory (or file) of plans into `<workspace>/plans/` (also extracts `tasks.json`) |
+| `--type spec\|plan` | auto | Force document type when using `--import` |
 | `--force` | | Overwrite existing files when importing |
+| `--no-handoff` | | Skip creating handoff.md when importing |
+| `--no-tasks` | | Skip creating tasks.json when importing a plan |
 
 ### Project files
 
-Drop these in your workspace to inject them into agent prompts on first turn:
+Drop these in your workspace — they're injected into agent prompts on the first turn:
 
-- **Specification**: `SPECIFICATION.md`, `spec.md`, `PRD.md`, `requirements.md` (first match wins)
-- **Plan**: `IMPLEMENTATION_PLAN.md`, `plan.md` (first match wins)
-- **Project rules**: `AGENTS.md` — coding standards and conventions
+- **Spec folder**: `specs/`, `spec/`, or `specifications/` — all `.md` files loaded
+- **Plan folder**: `plans/`, `plan/`, or `implementation_plans/` — all `.md` files loaded
+- **Single spec file** (fallback): `SPECIFICATION.md`, `spec.md`, `PRD.md`, `requirements.md`
+- **Single plan file** (fallback): `IMPLEMENTATION_PLAN.md`, `plan.md`
+- **Project rules**: `AGENTS.md` — coding standards, conventions, and constraints
+
+Folders take priority over single files. Use `--import-specs` / `--import-plans` to populate these from outside the workspace.
 
 ### Sessions
 
