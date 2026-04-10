@@ -1046,7 +1046,9 @@ def _print_summary(total_turns: int, turn_counts: dict[str, int]) -> None:
 
 
 def _create_initial_handoff(workspace: Path) -> None:
-    """Create an initial handoff.md file with a template structure."""
+    """Create an initial handoff.md (and default agents.json if absent) in the workspace."""
+    workspace.mkdir(parents=True, exist_ok=True)
+
     handoff_path = workspace / "handoff.md"
     template = """---HANDOFF---
 ROLE: architect
@@ -1072,7 +1074,23 @@ BLOCKERS:
 ---END---
 """
     handoff_path.write_text(template)
-    print(f"Created initial handoff.md in {workspace}")
+
+    agents_path = workspace / AGENTS_FILE
+    if not agents_path.exists():
+        default_agents_cfg = {
+            "default_backend": DEFAULT_BACKEND,
+            "retry_policy": {
+                "max_rework": 3,
+                "on_exceed": "needs_human",
+            },
+            "agents": {
+                "architect": {"prompt_file": "prompts/architect.md"},
+                "developer": {"prompt_file": "prompts/developer.md"},
+                "qa_engineer": {"prompt_file": "prompts/qa_engineer.md"},
+            },
+        }
+        agents_path.write_text(json.dumps(default_agents_cfg, indent=4))
+        print(f"Created default agents.json in {workspace}")
 
 
 def _do_startup_init(action: dict, _args: argparse.Namespace) -> None:

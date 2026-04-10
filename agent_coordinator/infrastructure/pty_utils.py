@@ -239,7 +239,7 @@ def _run_pty(
         )
     except Exception:
         # Clean up all FDs if Popen fails
-        for fd in open_fds:
+        for fd in list(open_fds):
             _close_fd(fd)
         raise
 
