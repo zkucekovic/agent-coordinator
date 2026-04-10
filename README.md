@@ -14,6 +14,9 @@ Shared files:
 ```bash
 pip install agent-coordinator
 ```
+```bash
+uv run pipx install agent-coordinator
+```
 
 From source:
 
