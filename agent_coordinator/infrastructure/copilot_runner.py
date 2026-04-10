@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
@@ -24,8 +25,19 @@ class CopilotRunner(AgentRunner):
         model: str | None = None,
         on_output: Callable[[str], None] | None = None,
     ) -> RunResult:
-        cmd = self._build_cmd(message, workspace, session_id, model)
-        result = run_with_pty(cmd, cwd=workspace, on_output=on_output)
+        # Write the prompt to a temp file and pass @path to avoid hitting the
+        # OS ARG_MAX limit when prompts include large spec/plan documents.
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        ) as tf:
+            tf.write(message)
+            prompt_arg = f"@{tf.name}"
+
+        try:
+            cmd = self._build_cmd(prompt_arg, workspace, session_id, model)
+            result = run_with_pty(cmd, cwd=workspace, on_output=on_output)
+        finally:
+            Path(tf.name).unlink(missing_ok=True)
 
         if result.returncode != 0 and not result.stdout:
             raise RuntimeError(f"copilot exited {result.returncode}: {result.stderr}")
@@ -33,8 +45,8 @@ class CopilotRunner(AgentRunner):
         session = self._extract_session_id(result.stderr, session_id, result.stdout)
         return RunResult(session_id=session, text=result.stdout)
 
-    def _build_cmd(self, message, workspace, session_id, model):  # noqa: ARG002
-        cmd = ["copilot", "--prompt", message, "--allow-all", "--no-color"]
+    def _build_cmd(self, prompt_arg: str, workspace: Path, session_id: str | None, model: str | None) -> list[str]:  # noqa: ARG002
+        cmd = ["copilot", "--prompt", prompt_arg, "--allow-all", "--no-color"]
         if model:
             cmd.extend(["--model", model])
         if session_id:
