@@ -351,6 +351,14 @@ class TestExecuteStartupAction(unittest.TestCase):
             self.assertTrue(ws.exists())
             self.assertTrue((ws / "handoff.md").exists())
 
+    def test_init_with_no_screen_copies_prompts(self):
+        with TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "new_ws"
+            args = self._make_args()
+            _execute_startup_action({"action": "init", "workspace": ws, "screen": None}, args)
+            self.assertTrue((ws / "prompts" / "architect.md").exists())
+            self.assertTrue((ws / "prompts" / "planner_helper.md").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

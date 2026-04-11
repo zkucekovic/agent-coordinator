@@ -1816,7 +1816,8 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  agent-coordinator                                    # interactive startup menu
+  agent-coordinator --init                             # initialise workspace (creates handoff.md, agents.json, prompts/)
+  agent-coordinator --init --workspace ./my-project   # initialise a specific workspace
   agent-coordinator --import SPECIFICATION.md          # import spec
   agent-coordinator --import-specs ./specs/            # import folder of specs
   agent-coordinator --import-plans ./plans/            # import folder of plans
@@ -1840,6 +1841,7 @@ Examples:
     )
     parser.add_argument("--reset", action="store_true", help="Clear saved session IDs and start fresh")
     parser.add_argument("--quiet", action="store_true", help="Suppress per-turn output")
+    parser.add_argument("--init", action="store_true", help="Initialise workspace: create handoff.md, agents.json, and copy default prompts")
     parser.add_argument(
         "--output-lines", type=int, default=10, help="Lines of agent output to show in the TUI window (default: 10)"
     )
@@ -1889,6 +1891,16 @@ Examples:
     _has_action = args.import_file or args.import_specs or args.import_plans or _explicit_workspace or args.reset
 
     workspace = args.workspace.resolve()
+
+    # ── Init mode ─────────────────────────────────────────────────────────────
+    if args.init:
+        workspace.mkdir(parents=True, exist_ok=True)
+        _create_initial_handoff(workspace)
+        if not args.quiet:
+            print(f"\n  Workspace initialised: {workspace}")
+            print(f"  Edit prompts/ to customise agent behaviour.")
+            print(f"  Run:  agent-coordinator --workspace {workspace}\n")
+        return
 
     # ── Import mode ───────────────────────────────────────────────────────────
     if args.import_file:
