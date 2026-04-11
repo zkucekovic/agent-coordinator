@@ -28,6 +28,15 @@ class TaskStatus(Enum):
     NEEDS_HUMAN = "needs_human"  # retry limit exceeded; human must intervene
 
 
+class TaskMode(Enum):
+    DISCOVERY = "discovery"
+    PLANNING = "planning"
+    IMPLEMENTATION = "implementation"
+    VERIFICATION = "verification"
+    REVIEW = "review"
+    REPAIR = "repair"
+
+
 class HandoffStatus(Enum):
     CONTINUE = "continue"
     REVIEW_REQUIRED = "review_required"
@@ -61,7 +70,19 @@ class Task:
     id: str
     title: str
     status: TaskStatus
+    mode: TaskMode = TaskMode.IMPLEMENTATION
+    description: str = ""
+    priority: int = 100
+    owner: str = ""
     acceptance_criteria: list[str] = field(default_factory=list)
+    constraints: list[str] = field(default_factory=list)
+    files_to_touch: list[str] = field(default_factory=list)
+    changed_files: list[str] = field(default_factory=list)
+    artifacts: list[str] = field(default_factory=list)
+    validation_results: list[str] = field(default_factory=list)
+    validation_status: str = "pending"
+    unresolved_issues: list[str] = field(default_factory=list)
+    follow_up_tasks: list[str] = field(default_factory=list)
     rework_count: int = 0
     depends_on: list[str] = field(default_factory=list)
     created_at: str = ""  # ISO 8601 timestamp
@@ -88,3 +109,16 @@ class HandoffMessage:
 class ValidationResult:
     valid: bool
     errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class WorkflowState:
+    version: int = 1
+    pending_task_id: str = ""
+    pending_actor: str = ""
+    pending_status: str = ""
+    pending_summary: str = ""
+    last_transition_key: str = ""
+    transition_keys: list[str] = field(default_factory=list)
+    no_progress_turns: int = 0
+    recovery_count: int = 0

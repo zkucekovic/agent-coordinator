@@ -5,21 +5,28 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from agent_coordinator.application.task_service import TaskService
 from agent_coordinator.cli import (
+    _CoordinatorContext,
     _DEFAULT_AGENTS,
     _HANDOFF_TO_TASK_STATUS,
     _file_hash,
+    _record_turn_result,
     _retry_prompt,
     _sync_task_status,
     load_agent_config,
     load_config,
     load_retry_policy,
 )
-from agent_coordinator.domain.models import HandoffStatus, TaskStatus
+from agent_coordinator.domain.models import HandoffStatus, RunResult, TaskStatus, WorkflowState
 from agent_coordinator.domain.retry_policy import RetryPolicy
+from agent_coordinator.infrastructure.event_log import EventLog
+from agent_coordinator.infrastructure.handoff_reader import HandoffReader
+from agent_coordinator.infrastructure.session_store import SessionStore
 from agent_coordinator.infrastructure.task_repository import JsonTaskRepository
+from agent_coordinator.infrastructure.workflow_state_repository import WorkflowStateRepository
 
 
 class TestLoadConfig(unittest.TestCase):
@@ -193,6 +200,106 @@ class TestHandoffToTaskStatusMapping(unittest.TestCase):
 
     def test_plan_complete_not_mapped(self):
         self.assertNotIn(HandoffStatus.PLAN_COMPLETE, _HANDOFF_TO_TASK_STATUS)
+
+
+class TestDerivedLogging(unittest.TestCase):
+    def test_duplicate_transition_is_not_appended_twice(self):
+        temp_dir = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+        state_dir = temp_dir / ".agent-coordinator"
+        state_dir.mkdir()
+        handoff_path = temp_dir / "handoff.md"
+        handoff_path.write_text(
+            """---HANDOFF---
+ROLE: architect
+STATUS: continue
+NEXT: architect
+TASK_ID: task-001
+TITLE: Build auth
+SUMMARY: start
+ACCEPTANCE:
+- done
+CONSTRAINTS:
+- none
+FILES_TO_TOUCH:
+- auth.py
+CHANGED_FILES:
+- none
+VALIDATION:
+- none
+BLOCKERS:
+- none
+---END---
+"""
+        )
+        tasks_path = temp_dir / "tasks.json"
+        tasks_path.write_text(
+            json.dumps({"tasks": [{"id": "task-001", "title": "Build auth", "status": "planned", "mode": "implementation"}]})
+        )
+        task_service = TaskService(JsonTaskRepository(tasks_path))
+        workflow_repo = WorkflowStateRepository(state_dir / "workflow_state.json")
+        workflow_state = WorkflowState(pending_task_id="task-001", pending_actor="developer", pending_status="planned")
+        workflow_repo.save(workflow_state)
+        prompt_file = state_dir / "prompts_log" / "turn-001-developer.md"
+        prompt_file.parent.mkdir()
+        prompt_file.write_text("prompt")
+
+        ctx = _CoordinatorContext(
+            workspace=temp_dir,
+            state=state_dir,
+            config={},
+            agents={},
+            default_backend="copilot",
+            handoff_path=handoff_path,
+            handoff_reader=HandoffReader(handoff_path),
+            session_store=SessionStore(state_dir / "sessions.json"),
+            event_log=EventLog(state_dir / "events.jsonl"),
+            workflow_state_repo=workflow_repo,
+            workflow_state=workflow_state,
+            router=MagicMock(),
+            builder=MagicMock(),
+            runner_cache={},
+            task_service=task_service,
+            display=MagicMock(),
+            interrupt_menu=MagicMock(),
+            verbose=False,
+            auto=True,
+            stateless=False,
+            logger=MagicMock(),
+        )
+        task = task_service.get("task-001")
+        result = RunResult(
+            session_id="s1",
+            text="""---HANDOFF---
+ROLE: developer
+STATUS: review_required
+NEXT: architect
+TASK_ID: task-001
+TITLE: Build auth
+SUMMARY: implemented auth
+ACCEPTANCE:
+- auth works
+CONSTRAINTS:
+- none
+FILES_TO_TOUCH:
+- auth.py
+CHANGED_FILES:
+- auth.py
+VALIDATION:
+- python -m unittest
+BLOCKERS:
+- none
+---END---
+""",
+        )
+
+        with patch("agent_coordinator.cli.time.sleep"):
+            _record_turn_result(ctx, "developer", task, "planned", 0.0, [], True, result, prompt_file, "hash")
+            _record_turn_result(ctx, "developer", task, "planned", 0.0, [], True, result, prompt_file, "hash")
+
+        handoff_content = handoff_path.read_text()
+        self.assertEqual(handoff_content.count("implemented auth"), 1)
+        self.assertEqual(len(ctx.event_log.read_all()), 1)
 
 
 if __name__ == "__main__":

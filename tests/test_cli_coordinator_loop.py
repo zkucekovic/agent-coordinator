@@ -45,18 +45,18 @@ _AGENTS_JSON = json.dumps(
     {
         "default_backend": "copilot",
         "agents": {
-            "architect": {"prompt_file": "prompts/architect.md"},
+            "architect": {"prompt_file": "prompts/architect.md", "supportsStatelessMode": True},
         },
     }
 )
 
 
-def _make_workspace(handoff_content: str = _HANDOFF_PLAN_COMPLETE) -> Path:
+def _make_workspace(handoff_content: str = _HANDOFF_PLAN_COMPLETE, agents_json: str = _AGENTS_JSON) -> Path:
     """Create a temp directory with a minimal workspace."""
     tmp = tempfile.mkdtemp()
     ws = Path(tmp)
     (ws / "handoff.md").write_text(handoff_content)
-    (ws / "agents.json").write_text(_AGENTS_JSON)
+    (ws / "agents.json").write_text(agents_json)
     return ws
 
 
@@ -188,6 +188,29 @@ class TestRunCoordinatorSingleAgentTurn(unittest.TestCase):
         self.assertTrue(
             any((c.args[0] if c.args else None) is True or c.kwargs.get("success") is True for c in finish_calls)
         )
+
+    def test_response_block_is_used_without_direct_handoff_write(self):
+        ws = _make_workspace(_HANDOFF_CONTINUE)
+        display = _mock_display()
+        runner = MagicMock()
+        runner.run.return_value = RunResult(session_id="test-session-1", text=_HANDOFF_PLAN_COMPLETE)
+
+        patches = [
+            *_common_patches(),
+            patch("agent_coordinator.infrastructure.tui.create_display", return_value=display),
+            patch("agent_coordinator.cli.create_runner_for_agent", return_value=runner),
+            patch(
+                "agent_coordinator.cli.PromptBuilder", return_value=MagicMock(**{"build.return_value": "test prompt"})
+            ),
+        ]
+        with _apply_patches(patches):
+            from agent_coordinator.cli import run_coordinator
+
+            run_coordinator(workspace=ws, max_turns=5, reset=False, verbose=False)
+
+        content = (ws / "handoff.md").read_text()
+        self.assertGreaterEqual(content.count("---HANDOFF---"), 2)
+        self.assertIn("STATUS: plan_complete", content)
 
 
 class TestRunCoordinatorReset(unittest.TestCase):
@@ -356,6 +379,42 @@ class TestRunCoordinatorStateless(unittest.TestCase):
 
         # session_store.set() must NOT be called in stateless mode
         mock_store.set.assert_not_called()
+
+    def test_stateless_keeps_sessions_for_agents_without_support(self):
+        ws = _make_workspace(
+            _HANDOFF_CONTINUE,
+            agents_json=json.dumps(
+                {
+                    "default_backend": "copilot",
+                    "agents": {
+                        "architect": {"prompt_file": "prompts/architect.md", "supportsStatelessMode": False},
+                    },
+                }
+            ),
+        )
+        display = _mock_display()
+        runner = self._make_mock_runner(ws)
+        mock_store = MagicMock()
+        mock_store.get.return_value = "persisted-session"
+        mock_builder = MagicMock(**{"build.return_value": "test prompt"})
+
+        patches = [
+            *_common_patches(),
+            patch("agent_coordinator.infrastructure.tui.create_display", return_value=display),
+            patch("agent_coordinator.cli.create_runner_for_agent", return_value=runner),
+            patch("agent_coordinator.cli.PromptBuilder", return_value=mock_builder),
+            patch("agent_coordinator.cli.SessionStore", return_value=mock_store),
+        ]
+        with _apply_patches(patches):
+            from agent_coordinator.cli import run_coordinator
+
+            run_coordinator(workspace=ws, max_turns=5, reset=False, verbose=False, stateless=True)
+
+        call_kwargs = runner.run.call_args.kwargs
+        self.assertEqual(call_kwargs.get("session_id"), "persisted-session")
+        build_args = mock_builder.build.call_args
+        self.assertFalse(build_args.args[5] if len(build_args.args) > 5 else build_args.kwargs.get("first_turn"))
+        mock_store.set.assert_called_once_with("architect", "sess-abc")
 
 
 if __name__ == "__main__":

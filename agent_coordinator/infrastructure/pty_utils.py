@@ -32,6 +32,7 @@ import re
 import select
 import sys
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -208,6 +209,25 @@ def _drain_stderr(stderr_r: int) -> bytes:
     return stderr_data
 
 
+def _wait_for_terminated_process(proc: object) -> None:
+    """Wait for a subprocess to exit after an interrupt, escalating if needed."""
+    import subprocess
+
+    deadline = time.monotonic() + 2.0
+    sent_kill = False
+    while True:
+        try:
+            proc.wait(timeout=0.1)
+            return
+        except KeyboardInterrupt:
+            continue
+        except subprocess.TimeoutExpired:
+            if not sent_kill and time.monotonic() >= deadline:
+                with contextlib.suppress(OSError):
+                    proc.kill()
+                sent_kill = True
+
+
 def _run_pty(
     cmd: list[str],
     cwd: Path | None,
@@ -265,21 +285,26 @@ def _run_pty(
     out_thread.start()
     in_thread.start()
 
+    interrupted = False
     try:
         proc.wait()
     except KeyboardInterrupt:
-        proc.terminate()
-        proc.wait()
-        raise
+        interrupted = True
+        with contextlib.suppress(OSError):
+            proc.terminate()
+        _wait_for_terminated_process(proc)
+    finally:
+        done.set()
+        out_thread.join(timeout=2)
+        in_thread.join(timeout=0.5)
 
-    done.set()
-    out_thread.join(timeout=2)
-    in_thread.join(timeout=0.5)
+        stderr_data = _drain_stderr(stderr_r)
 
-    stderr_data = _drain_stderr(stderr_r)
+        _close_fd(master_fd)
+        _close_fd(stderr_r)
 
-    _close_fd(master_fd)
-    _close_fd(stderr_r)
+    if interrupted:
+        raise KeyboardInterrupt
 
     return PtyResult(
         returncode=proc.returncode,

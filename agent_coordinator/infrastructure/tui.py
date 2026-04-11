@@ -539,7 +539,8 @@ class Popup:
         while choice not in valid_keys:
             try:
                 ch = sys.stdin.read(1)
-                choice = ch.lower()
+            except KeyboardInterrupt:  # noqa: PERF203
+                continue
             except (EOFError, OSError):  # noqa: PERF203
                 if options:
                     choice = options[-1][0]
@@ -549,6 +550,18 @@ class Popup:
                 else:
                     choice = "q"
                 break
+            if not ch:
+                if options:
+                    choice = options[-1][0]
+                elif items:
+                    last = [e for e in items if e is not None]
+                    choice = last[-1][0].lower() if last else "q"
+                else:
+                    choice = "q"
+                break
+            if ch == "\x03":
+                continue
+            choice = ch.lower()
         return choice
 
     # ── Plain-text fallback (non-TTY / alt-screen not active) ─────────────────

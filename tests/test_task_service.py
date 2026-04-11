@@ -83,6 +83,34 @@ class TestNextReadyTask(unittest.TestCase):
         os.unlink(path)
         self.assertEqual(task.id, "t1")
 
+    def test_prefers_implementation_when_planning_is_sufficient(self):
+        svc, path = _make_service(
+            [
+                {"id": "t1", "title": "Create implementation plan", "status": "planned", "mode": "planning"},
+                {
+                    "id": "t2",
+                    "title": "Add auth middleware",
+                    "status": "planned",
+                    "mode": "implementation",
+                    "acceptance_criteria": ["middleware rejects missing auth"],
+                },
+            ]
+        )
+        task = svc.next_ready_task()
+        os.unlink(path)
+        self.assertEqual(task.id, "t2")
+
+    def test_prefers_planning_before_implementation_when_plan_not_sufficient(self):
+        svc, path = _make_service(
+            [
+                {"id": "t1", "title": "Create implementation plan", "status": "planned", "mode": "planning"},
+                {"id": "t2", "title": "Add auth middleware", "status": "planned", "mode": "implementation"},
+            ]
+        )
+        task = svc.next_ready_task()
+        os.unlink(path)
+        self.assertEqual(task.id, "t1")
+
 
 class TestIncrementRework(unittest.TestCase):
     def test_within_limit_returns_rework_requested(self):

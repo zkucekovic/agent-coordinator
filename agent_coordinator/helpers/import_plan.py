@@ -15,6 +15,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from agent_coordinator.application.task_classifier import infer_task_mode
+from agent_coordinator.domain.models import TaskMode
+
 # ── Document type detection ────────────────────────────────────────────────────
 
 _SPEC_KEYWORDS = re.compile(
@@ -156,8 +159,18 @@ def extract_tasks_from_plan(content: str) -> list[dict[str, Any]]:
                     "title": _clean_title(title),
                     "description": description,
                     "status": "planned",
+                    "mode": infer_task_mode(title, description, acceptance).value,
+                    "priority": len(tasks),
+                    "owner": "",
                     "acceptance_criteria": acceptance,
                     "constraints": constraints,
+                    "files_to_touch": [],
+                    "changed_files": [],
+                    "artifacts": [],
+                    "validation_results": [],
+                    "validation_status": "pending",
+                    "unresolved_issues": [],
+                    "follow_up_tasks": [],
                     "depends_on": [],
                     "rework_count": 0,
                     "created_at": ts,
@@ -566,6 +579,41 @@ def _import_spec(
 ) -> None:
     dest = workspace / "SPECIFICATION.md"
     _write_file(dest, content, force, verbose, interactive)
+
+    tasks_path = workspace / "tasks.json"
+    if not tasks_path.exists() or force:
+        ts = datetime.now(timezone.utc).isoformat()
+        bootstrap_tasks = build_tasks_json(
+            [
+                {
+                    "id": "task-000",
+                    "title": "Create implementation plan",
+                    "description": "Read the specification, define scope, and create executable implementation tasks.",
+                    "status": "planned",
+                    "mode": TaskMode.PLANNING.value,
+                    "priority": 0,
+                    "owner": "",
+                    "acceptance_criteria": [
+                        "Scope is clear enough to begin building",
+                        "Dependencies are identified",
+                        "At least one executable implementation task exists",
+                    ],
+                    "constraints": [],
+                    "files_to_touch": ["plan.md", "tasks.json"],
+                    "changed_files": [],
+                    "artifacts": [],
+                    "validation_results": [],
+                    "validation_status": "pending",
+                    "unresolved_issues": [],
+                    "follow_up_tasks": [],
+                    "depends_on": [],
+                    "rework_count": 0,
+                    "created_at": ts,
+                    "updated_at": ts,
+                }
+            ]
+        )
+        _write_file(tasks_path, json.dumps(bootstrap_tasks, indent=2), force, verbose, interactive)
 
     if not no_handoff:
         handoff_path = workspace / "handoff.md"

@@ -220,6 +220,18 @@ class TestImportDocument(unittest.TestCase):
             self.assertTrue((workspace / "SPECIFICATION.md").exists())
             self.assertTrue((workspace / "handoff.md").exists())
 
+    def test_import_spec_creates_bootstrap_tasks_json(self):
+        with TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "ws"
+            source = Path(tmp) / "SPECIFICATION.md"
+            source.write_text(SPEC_CONTENT)
+
+            self._import(source, workspace, doc_type="spec")
+
+            data = json.loads((workspace / "tasks.json").read_text())
+            self.assertEqual(data["tasks"][0]["id"], "task-000")
+            self.assertEqual(data["tasks"][0]["mode"], "planning")
+
     def test_import_spec_content_intact(self):
         with TemporaryDirectory() as tmp:
             workspace = Path(tmp) / "ws"

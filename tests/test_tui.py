@@ -2,10 +2,12 @@
 
 import io
 import unittest
+from unittest.mock import patch
 
 from agent_coordinator.infrastructure.tui import (
     AgentState,
     InterruptMenu,
+    Popup,
     Screen,
     SimpleProgressDisplay,
     Theme,
@@ -164,6 +166,14 @@ class TestInterruptMenu(unittest.TestCase):
     def test_instantiates_with_none(self):
         menu = InterruptMenu(None)
         self.assertIsInstance(menu, InterruptMenu)
+
+
+class TestPopup(unittest.TestCase):
+    def test_read_choice_retries_after_keyboard_interrupt(self):
+        with patch("sys.stdin.read", side_effect=[KeyboardInterrupt, "q"]) as read:
+            choice = Popup._read_choice({"q"}, None, [("q", "Quit")])
+        self.assertEqual(choice, "q")
+        self.assertEqual(read.call_count, 2)
 
 
 class TestAgentState(unittest.TestCase):

@@ -7,7 +7,7 @@ import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from agent_coordinator.cli import (
     _DEFAULT_AGENTS,
@@ -15,7 +15,11 @@ from agent_coordinator.cli import (
     _execute_startup_action,
     _file_hash,
     _handle_popup_command,
+    _plan_files,
     _retry_prompt,
+    _show_startup_popup,
+    _start_task_generation_from_plan,
+    agent_supports_stateless_mode,
     load_agent_config,
     load_config,
     load_retry_policy,
@@ -95,6 +99,17 @@ class TestLoadAgentConfig(unittest.TestCase):
     def test_config_without_agents_key_returns_defaults(self):
         result = load_agent_config({"default_backend": "copilot"})
         self.assertEqual(result, _DEFAULT_AGENTS)
+
+
+class TestStatelessSupport(unittest.TestCase):
+    def test_architect_defaults_to_not_supporting_stateless_mode(self):
+        self.assertFalse(agent_supports_stateless_mode("architect", {"prompt_file": "prompts/architect.md"}))
+
+    def test_opted_out_agent_ignores_stateless_mode(self):
+        self.assertFalse(agent_supports_stateless_mode("developer", {"supportsStatelessMode": False}))
+
+    def test_non_architect_defaults_to_supporting_stateless_mode(self):
+        self.assertTrue(agent_supports_stateless_mode("developer", {"prompt_file": "prompts/developer.md"}))
 
 
 class TestLoadRetryPolicy(unittest.TestCase):
@@ -177,7 +192,7 @@ class TestRetryPrompt(unittest.TestCase):
             ws.mkdir()
             result = _retry_prompt("developer", ws)
             # The snippet section should be empty (no actual file content)
-            self.assertIn("Current handoff.md (first 10 lines):\n\n", result)
+            self.assertIn("Current derived handoff log", result)
 
 
 class TestCreateInitialHandoff(unittest.TestCase):
@@ -196,6 +211,57 @@ class TestCreateInitialHandoff(unittest.TestCase):
             content = (ws / "handoff.md").read_text()
             self.assertIn("---HANDOFF---", content)
             self.assertIn("---END---", content)
+
+
+class TestPlanStartupHelpers(unittest.TestCase):
+    def test_plan_files_finds_root_and_directory_plans(self):
+        with TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "ws"
+            (ws / "plans").mkdir(parents=True)
+            (ws / "plan.md").write_text("# Root Plan")
+            (ws / "plans" / "phase1.md").write_text("# Dir Plan")
+            result = _plan_files(ws)
+            names = {path.name for path in result}
+            self.assertIn("plan.md", names)
+            self.assertIn("phase1.md", names)
+
+    def test_start_task_generation_from_plan_seeds_workflow_state(self):
+        with TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "ws"
+            ws.mkdir()
+            (ws / "plan.md").write_text("### task-001: Add auth middleware\nImplement middleware.\n")
+            self.assertTrue(_start_task_generation_from_plan(ws))
+            state = json.loads((ws / ".agent-coordinator" / "workflow_state.json").read_text())
+            tasks = json.loads((ws / "tasks.json").read_text())["tasks"]
+            task_ids = {task["id"] for task in tasks}
+            self.assertEqual(state["pending_actor"], "architect")
+            self.assertEqual(state["pending_task_id"], "task-plan-refresh")
+            self.assertIn("task-001", task_ids)
+            self.assertIn("task-plan-refresh", task_ids)
+
+    def test_show_startup_popup_plan_choice_routes_to_plan_tasking(self):
+        with TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "ws"
+            ws.mkdir()
+            (ws / "plan.md").write_text("### task-001: Add auth middleware\nImplement middleware.\n")
+            (ws / "handoff.md").write_text("---HANDOFF---\nROLE: architect\nSTATUS: continue\nNEXT: architect\nTASK_ID: task-000\nTITLE: Init\nSUMMARY: init\nACCEPTANCE:\n- done\nCONSTRAINTS:\n- none\nFILES_TO_TOUCH:\n- plan.md\nCHANGED_FILES:\n- none\nVALIDATION:\n- none\nBLOCKERS:\n- none\n---END---\n")
+            class FakeScreen:
+                pass
+
+            display = FakeScreen()
+            display._theme = MagicMock()
+            display._theme.color_success = ""
+            display._theme.color_warning = ""
+            display._theme.text_dim = ""
+            display._theme.text_secondary = ""
+            display._append_content = MagicMock()
+            display._active = True
+            display.show_error_dialog = MagicMock(return_value="p")
+            with patch("agent_coordinator.infrastructure.tui.Screen", new=FakeScreen):
+                result = _show_startup_popup(display, ws)
+            self.assertEqual(result, "r")
+            state = json.loads((ws / ".agent-coordinator" / "workflow_state.json").read_text())
+            self.assertEqual(state["pending_task_id"], "task-plan-refresh")
 
 
 class TestHandlePopupCommand(unittest.TestCase):

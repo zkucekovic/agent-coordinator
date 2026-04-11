@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from agent_coordinator.application.task_classifier import expected_outputs_for_mode
 from agent_coordinator.domain.models import Task
 
 
@@ -72,16 +73,17 @@ class PromptBuilder:
 
         return (
             f"{preamble}\n"
-            f"## Current state of handoff.md {task_hint}\n\n"
+            f"## Structured workflow state {task_hint}\n\n"
             f"```\n{handoff_content}\n```\n\n"
             f"{task_context}"
             f"---\n\n"
-            f"Read the latest `---HANDOFF---` block above. "
+            f"Use the structured task context above as the source of truth. "
             f"`NEXT: {role}` — it is your turn.\n\n"
             f"Take your action now:\n"
             f"- Work in `{workspace}` (read and write files as needed)\n"
-            f"- Append your handoff entry to `{workspace}/handoff.md`\n"
-            f"- End with a valid `---HANDOFF---` … `---END---` block\n"
+            f"- Prefer delivery artifacts over coordination artifacts unless the task explicitly asks for planning/discovery work\n"
+            f"- Do not edit `handoff.md` directly unless the task explicitly requires it\n"
+            f"- Return your result in the response, ending with a valid `---HANDOFF---` … `---END---` block\n"
         )
 
     def _resolve_file(self, relative_path: str, workspace: Path) -> Path | None:
@@ -189,5 +191,20 @@ class PromptBuilder:
             f"### Next ready task{rework_note}\n\n"
             f"- **ID**: {task.id}\n"
             f"- **Title**: {task.title}\n"
-            f"- **Status**: {task.status.value}\n\n"
+            f"- **Status**: {task.status.value}\n"
+            f"- **Mode**: {task.mode.value}\n"
+            f"- **Owner**: {task.owner or 'unassigned'}\n"
+            f"- **Expected outputs**: {', '.join(expected_outputs_for_mode(task.mode))}\n"
+            + (f"- **Description**: {task.description}\n" if task.description else "")
+            + (
+                "- **Files to touch**:\n" + "".join(f"  - {path}\n" for path in task.files_to_touch)
+                if task.files_to_touch
+                else ""
+            )
+            + (
+                "- **Acceptance criteria**:\n" + "".join(f"  - {item}\n" for item in task.acceptance_criteria)
+                if task.acceptance_criteria
+                else ""
+            )
+            + "\n"
         )

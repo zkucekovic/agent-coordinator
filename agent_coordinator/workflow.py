@@ -1,7 +1,10 @@
-"""Backwards-compatibility shim — delegates to src.application.router and src.infrastructure.
+"""Backwards-compatibility shim — prefers structured workflow state when present.
 
 New code should use WorkflowRouter directly.
 """
+
+import json
+from pathlib import Path
 
 from agent_coordinator.application.router import WorkflowRouter
 from agent_coordinator.domain.models import HandoffMessage, HandoffStatus
@@ -28,6 +31,29 @@ def is_blocked(message: HandoffMessage) -> bool:
 
 
 def get_workflow_state(handoff_file_path: str) -> dict:
+    handoff_path = Path(handoff_file_path)
+    state_path = handoff_path.parent / ".agent-coordinator" / "workflow_state.json"
+    tasks_path = handoff_path.parent / "tasks.json"
+    if state_path.exists() and tasks_path.exists():
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            tasks = json.loads(tasks_path.read_text(encoding="utf-8")).get("tasks", [])
+            by_id = {task["id"]: task for task in tasks}
+            pending_id = state.get("pending_task_id", "")
+            pending_actor = state.get("pending_actor", "")
+            pending_task = by_id.get(pending_id, {})
+            return {
+                "valid": True,
+                "next_actor": pending_actor or "none",
+                "status": pending_task.get("status", state.get("pending_status", "unknown")),
+                "task_id": pending_id or "unknown",
+                "is_complete": not pending_actor and all(task.get("status") == "done" for task in tasks),
+                "is_blocked": pending_task.get("status") in {"blocked", "needs_human"},
+                "needs_human": pending_actor == "human",
+                "errors": [],
+            }
+        except Exception:
+            pass
     with open(handoff_file_path, encoding="utf-8") as f:
         content = f.read()
 

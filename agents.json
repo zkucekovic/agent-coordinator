@@ -6,13 +6,16 @@
     },
     "agents": {
         "architect": {
-            "prompt_file": "prompts/architect.md"
+            "prompt_file": "prompts/architect.md",
+            "supportsStatelessMode": false
         },
         "developer": {
-            "prompt_file": "prompts/developer.md"
+            "prompt_file": "prompts/developer.md",
+            "supportsStatelessMode": true
         },
         "qa_engineer": {
-            "prompt_file": "prompts/qa_engineer.md"
+            "prompt_file": "prompts/qa_engineer.md",
+            "supportsStatelessMode": true
         }
     }
 }

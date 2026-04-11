@@ -24,10 +24,16 @@ if TYPE_CHECKING:
     from agent_coordinator.infrastructure.tui import Screen
 
 from agent_coordinator.application.prompt_builder import PromptBuilder
+from agent_coordinator.application.task_classifier import (
+    default_agent_for_mode,
+    expected_outputs_for_mode,
+    infer_task_mode,
+    task_has_delivery_artifacts,
+)
 from agent_coordinator.application.router import WorkflowRouter
 from agent_coordinator.application.runner import AgentRunner
 from agent_coordinator.application.task_service import TaskService
-from agent_coordinator.domain.models import HandoffStatus, TaskStatus
+from agent_coordinator.domain.models import HandoffMessage, HandoffStatus, TaskMode, TaskStatus, WorkflowState
 from agent_coordinator.domain.retry_policy import RetryPolicy
 from agent_coordinator.infrastructure.diagnostic_log import get_logger, log_crash
 from agent_coordinator.infrastructure.diagnostic_log import setup as setup_log
@@ -35,6 +41,8 @@ from agent_coordinator.infrastructure.event_log import EventLog
 from agent_coordinator.infrastructure.handoff_reader import HandoffReader
 from agent_coordinator.infrastructure.session_store import SessionStore
 from agent_coordinator.infrastructure.task_repository import JsonTaskRepository
+from agent_coordinator.infrastructure.workflow_state_repository import WorkflowStateRepository
+from agent_coordinator.handoff_parser import extract_latest
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -45,6 +53,7 @@ DEFAULT_HANDOFF_RETRIES = 1
 STATE_DIR = ".agent-coordinator"
 SESSION_FILE = "sessions.json"
 EVENT_LOG_FILE = "events.jsonl"
+WORKFLOW_STATE_FILE = "workflow_state.json"
 AGENTS_FILE = "agents.json"
 
 
@@ -60,9 +69,9 @@ class _QuitSignalError(Exception):
 
 
 _DEFAULT_AGENTS: dict = {
-    "architect": {"prompt_file": "prompts/architect.md"},
-    "developer": {"prompt_file": "prompts/developer.md"},
-    "qa_engineer": {"prompt_file": "prompts/qa_engineer.md"},
+    "architect": {"prompt_file": "prompts/architect.md", "supportsStatelessMode": False},
+    "developer": {"prompt_file": "prompts/developer.md", "supportsStatelessMode": True},
+    "qa_engineer": {"prompt_file": "prompts/qa_engineer.md", "supportsStatelessMode": True},
 }
 
 DEFAULT_BACKEND = "copilot"
@@ -104,6 +113,13 @@ def load_retry_policy(config: dict) -> RetryPolicy:
     if config and "retry_policy" in config:
         return RetryPolicy.from_dict(config["retry_policy"])
     return RetryPolicy()
+
+
+def agent_supports_stateless_mode(agent: str, agent_cfg: dict[str, Any]) -> bool:
+    """Return whether the agent should honor the global --stateless flag."""
+    if "supportsStatelessMode" in agent_cfg:
+        return bool(agent_cfg["supportsStatelessMode"])
+    return agent != "architect"
 
 
 # ── Runner factory ────────────────────────────────────────────────────────────
@@ -257,19 +273,366 @@ def _file_hash(path: Path) -> str:
 
 
 def _retry_prompt(_agent: str, workspace: Path) -> str:
-    """Prompt sent on retry attempts after the agent failed to write a valid handoff."""
+    """Prompt sent on retry attempts after the agent failed to return a valid handoff."""
     handoff = workspace / "handoff.md"
     snippet = ""
     if handoff.exists():
         lines = handoff.read_text(errors="replace").splitlines()[:10]
         snippet = "\n".join(lines)
     return (
-        f"Your previous response did NOT append a valid ---HANDOFF--- block to "
-        f"{workspace}/handoff.md.\n\n"
-        f"Current handoff.md (first 10 lines):\n{snippet}\n\n"
-        f"Please complete your work and write the required ---HANDOFF--- block "
-        f"followed by ---END--- at the end of {workspace}/handoff.md."
+        f"Your previous response did NOT append/include a valid ---HANDOFF--- block.\n\n"
+        f"Current derived handoff log (first 10 lines of {workspace}/handoff.md):\n{snippet}\n\n"
+        f"Please complete your work and return the required ---HANDOFF--- block "
+        f"followed by ---END--- in your response."
     )
+
+
+def _bootstrap_tasks(workspace: Path) -> Path:
+    """Create a minimal tasks.json when no structured task state exists yet."""
+    tasks_path = workspace / "tasks.json"
+    if tasks_path.exists():
+        return tasks_path
+    from datetime import datetime, timezone
+
+    workspace.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(timezone.utc).isoformat()
+    spec_exists = any((workspace / name).exists() for name in ("SPECIFICATION.md", "spec.md", "PRD.md", "requirements.md"))
+    task = {
+        "id": "task-000",
+        "title": "Create implementation plan" if spec_exists else "Initialize project",
+        "status": "planned",
+        "mode": TaskMode.PLANNING.value,
+        "description": (
+            "Read the project requirements, define scope, and create executable implementation tasks."
+            if spec_exists
+            else "Clarify the goal, define scope, and create the first executable tasks."
+        ),
+        "priority": 0,
+        "owner": "",
+        "acceptance_criteria": [
+            "Scope is clear enough to begin building",
+            "Dependencies are identified",
+            "At least one executable implementation task exists",
+        ],
+        "constraints": [],
+        "files_to_touch": ["tasks.json", "plan.md"],
+        "changed_files": [],
+        "artifacts": [],
+        "validation_results": [],
+        "validation_status": "pending",
+        "unresolved_issues": [],
+        "follow_up_tasks": [],
+        "rework_count": 0,
+        "depends_on": [],
+        "created_at": now,
+        "updated_at": now,
+    }
+    tasks_path.write_text(json.dumps({"version": 1, "tasks": [task]}, indent=2), encoding="utf-8")
+    return tasks_path
+
+
+def _initial_workflow_state(
+    repo: WorkflowStateRepository,
+    handoff_reader: HandoffReader,
+    task_service: TaskService | None,
+) -> WorkflowState:
+    """Load workflow state, seeding it from tasks and legacy handoff when needed."""
+    state = repo.load()
+    if state.pending_task_id and state.pending_actor:
+        return state
+    if task_service is not None:
+        task = task_service.next_ready_task()
+        if task is not None:
+            state.pending_task_id = task.id
+            state.pending_actor = task_service.default_agent_for_task(task)
+            state.pending_status = task.status.value
+    message = handoff_reader.read()
+    if message is not None:
+        state.pending_task_id = message.task_id or state.pending_task_id
+        if message.status in {HandoffStatus.PLAN_COMPLETE, HandoffStatus.DONE, HandoffStatus.APPROVED, HandoffStatus.IMPLEMENTATION_COMPLETE}:
+            state.pending_actor = ""
+        elif message.next not in ("none", "human"):
+            state.pending_actor = message.next
+        state.pending_status = message.status.value
+        state.pending_summary = message.summary
+    repo.save(state)
+    return state
+
+
+def _normalize_list(items: list[str]) -> list[str]:
+    cleaned = []
+    seen = set()
+    for item in items:
+        value = item.strip()
+        if not value or value.lower() in {"n/a", "none"}:
+            continue
+        if value not in seen:
+            cleaned.append(value)
+            seen.add(value)
+    return cleaned
+
+
+def _plan_files(workspace: Path) -> list[Path]:
+    """Return plan documents available in the workspace."""
+    root_files = [workspace / name for name in ("plan.md", "PLAN.md", "IMPLEMENTATION_PLAN.md", "implementation_plan.md")]
+    found = [path for path in root_files if path.exists()]
+    for dirname in ("plans", "plan", "implementation_plans"):
+        directory = workspace / dirname
+        if directory.is_dir():
+            found.extend(sorted(path for path in directory.rglob("*.md") if path.is_file()))
+    unique: list[Path] = []
+    seen = set()
+    for path in found:
+        if path not in seen:
+            unique.append(path)
+            seen.add(path)
+    return unique
+
+
+def _start_task_generation_from_plan(workspace: Path) -> bool:
+    """Seed missing tasks from plan docs and route the next turn to planning."""
+    plan_files = _plan_files(workspace)
+    if not plan_files:
+        return False
+
+    from datetime import datetime, timezone
+
+    from agent_coordinator.helpers.import_plan import extract_tasks_from_plan
+
+    tasks_path = _bootstrap_tasks(workspace)
+    task_service = TaskService(JsonTaskRepository(tasks_path))
+    existing_ids = {task.id for task in task_service.all()}
+    now = datetime.now(timezone.utc).isoformat()
+    inserted = False
+    for index, plan_file in enumerate(plan_files, start=1):
+        extracted = extract_tasks_from_plan(plan_file.read_text(encoding="utf-8"))
+        for task_data in extracted:
+            if task_data["id"] in existing_ids:
+                continue
+            task_service.ensure_task(
+                task_data["id"],
+                task_data["title"],
+                mode=TaskMode(task_data.get("mode", infer_task_mode(task_data["title"], task_data.get("description", "")).value)),
+                description=task_data.get("description", ""),
+            )
+            task = task_service.get(task_data["id"])
+            assert task is not None
+            task.priority = int(task_data.get("priority", 100 + index))
+            task.acceptance_criteria = task_data.get("acceptance_criteria", [])
+            task.constraints = task_data.get("constraints", [])
+            task.files_to_touch = task_data.get("files_to_touch", [])
+            task.depends_on = task_data.get("depends_on", [])
+            task.owner = task_data.get("owner", "")
+            task.created_at = task_data.get("created_at", now)
+            task.updated_at = task_data.get("updated_at", now)
+            task_service.save(task)
+            existing_ids.add(task.id)
+            inserted = True
+
+    planning_task = task_service.ensure_task(
+        "task-plan-refresh",
+        "Add new tasks from plan",
+        mode=TaskMode.PLANNING,
+        description="Review the plan documents, add any missing executable tasks to tasks.json, and stop once implementation can proceed.",
+    )
+    planning_task.status = TaskStatus.PLANNED
+    planning_task.priority = -10
+    planning_task.owner = "architect"
+    planning_task.files_to_touch = _normalize_list(
+        planning_task.files_to_touch + [str(path.relative_to(workspace)) for path in plan_files] + ["tasks.json"]
+    )
+    planning_task.acceptance_criteria = [
+        "Any missing executable tasks from the plan are added to tasks.json",
+        "Dependencies for new tasks are identified",
+        "Planning stops once the next implementation task is concrete and testable",
+    ]
+    task_service.save(planning_task)
+
+    workflow_repo = WorkflowStateRepository(_state_dir(workspace) / WORKFLOW_STATE_FILE)
+    workflow_state = workflow_repo.load()
+    workflow_state.pending_task_id = planning_task.id
+    workflow_state.pending_actor = "architect"
+    workflow_state.pending_status = planning_task.status.value
+    workflow_state.pending_summary = (
+        "Startup choice: add new tasks from the plan."
+        + (" Missing plan tasks were seeded into structured state." if inserted else " Review plan docs for additional executable tasks.")
+    )
+    workflow_repo.save(workflow_state)
+    return True
+
+
+def _handoff_block_from_message(message: HandoffMessage) -> str:
+    def _section(name: str, values: list[str]) -> str:
+        vals = _normalize_list(values)
+        if not vals:
+            return f"{name}:\n- none"
+        return f"{name}:\n" + "\n".join(f"- {value}" for value in vals)
+
+    parts = [
+        "---HANDOFF---",
+        f"ROLE: {message.role}",
+        f"STATUS: {message.status.value}",
+        f"NEXT: {message.next}",
+        f"TASK_ID: {message.task_id}",
+        f"TITLE: {message.title}",
+        f"SUMMARY: {message.summary}",
+        _section("ACCEPTANCE", message.acceptance),
+        _section("CONSTRAINTS", message.constraints),
+        _section("FILES_TO_TOUCH", message.files_to_touch),
+        _section("CHANGED_FILES", message.changed_files),
+        _section("VALIDATION", message.validation),
+        _section("BLOCKERS", message.blockers),
+        "---END---",
+    ]
+    return "\n".join(parts) + "\n"
+
+
+def _append_handoff_log(handoff_path: Path, message: HandoffMessage) -> None:
+    """Append a normalized handoff entry at EOF."""
+    from datetime import datetime, timezone
+
+    prefix = f"## {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')} — {message.role}\n\n"
+    existing = handoff_path.read_text(encoding="utf-8") if handoff_path.exists() else ""
+    separator = "" if not existing else ("\n" if existing.endswith("\n") else "\n\n")
+    handoff_path.write_text(existing + separator + prefix + _handoff_block_from_message(message), encoding="utf-8")
+
+
+def _extract_agent_message(response_text: str, handoff_reader: HandoffReader) -> HandoffMessage | None:
+    """Parse a structured handoff block from agent output, with file fallback."""
+    message, _errors = extract_latest(response_text)
+    if message is not None:
+        return message
+    return handoff_reader.read()
+
+
+def _transition_key(task_id: str, from_status: str, to_status: str, assigned_agent: str) -> str:
+    return f"{task_id}|{from_status}|{to_status}|{assigned_agent}"
+
+
+def _desired_task_status(message: HandoffMessage) -> TaskStatus | None:
+    if message.status == HandoffStatus.CONTINUE:
+        return TaskStatus.READY_FOR_ENGINEERING
+    if message.status == HandoffStatus.REVIEW_REQUIRED:
+        return TaskStatus.READY_FOR_ARCHITECT_REVIEW
+    if message.status == HandoffStatus.REWORK_REQUIRED:
+        return TaskStatus.REWORK_REQUESTED
+    if message.status in {HandoffStatus.APPROVED, HandoffStatus.DONE, HandoffStatus.PLAN_COMPLETE, HandoffStatus.IMPLEMENTATION_COMPLETE}:
+        return TaskStatus.DONE
+    if message.status == HandoffStatus.BLOCKED:
+        return TaskStatus.BLOCKED
+    if message.status == HandoffStatus.NEEDS_HUMAN:
+        return TaskStatus.NEEDS_HUMAN
+    return None
+
+
+def _next_mode(current_mode: TaskMode, message: HandoffMessage) -> TaskMode:
+    if message.next == "qa_engineer":
+        return TaskMode.VERIFICATION
+    if message.next == "architect" and message.status == HandoffStatus.REVIEW_REQUIRED:
+        return TaskMode.REVIEW
+    if message.next == "developer" and message.status == HandoffStatus.REWORK_REQUIRED:
+        return TaskMode.REPAIR
+    return current_mode
+
+
+def _update_task_from_message(
+    ctx: _CoordinatorContext,
+    active_task_id: str,
+    agent: str,
+    message: HandoffMessage,
+) -> tuple[str, str, bool]:
+    """Apply an agent result to structured task state."""
+    if ctx.task_service is None:
+        return "", "", False
+    active_task = ctx.task_service.ensure_task(active_task_id, message.title, mode=infer_task_mode(message.title, message.summary))
+    task = ctx.task_service.ensure_task(
+        message.task_id or active_task_id,
+        message.title,
+        mode=infer_task_mode(message.title, message.summary, message.acceptance, message.files_to_touch),
+        description=message.summary,
+    )
+    progress = False
+    if active_task.id != task.id and active_task.mode in (TaskMode.PLANNING, TaskMode.DISCOVERY):
+        active_task.status = TaskStatus.DONE
+        ctx.task_service.save(active_task)
+        progress = True
+
+    before_status = task.status.value
+    old_changed = list(task.changed_files)
+    old_validation = list(task.validation_results)
+    task.title = message.title or task.title
+    if message.summary:
+        task.description = message.summary
+    if message.acceptance:
+        task.acceptance_criteria = _normalize_list(message.acceptance)
+    if message.constraints:
+        task.constraints = _normalize_list(message.constraints)
+    if message.files_to_touch:
+        task.files_to_touch = _normalize_list(message.files_to_touch)
+    task.changed_files = _normalize_list(task.changed_files + message.changed_files)
+    task.artifacts = _normalize_list(task.artifacts + message.changed_files)
+    task.validation_results = _normalize_list(task.validation_results + message.validation)
+    task.validation_status = "passed" if task.validation_results and not message.blockers else task.validation_status
+    task.unresolved_issues = _normalize_list(task.unresolved_issues + message.blockers)
+    task.owner = message.next
+    task.mode = _next_mode(task.mode, message)
+
+    desired = _desired_task_status(message)
+    if task.mode in (TaskMode.IMPLEMENTATION, TaskMode.REPAIR) and message.status == HandoffStatus.REVIEW_REQUIRED:
+        if not task_has_delivery_artifacts(task):
+            desired = TaskStatus.REWORK_REQUESTED
+            task.unresolved_issues = _normalize_list(task.unresolved_issues + ["No delivery artifacts were produced"])
+    if desired is not None:
+        task.status = desired
+    ctx.task_service.save(task)
+
+    if before_status != task.status.value:
+        progress = True
+    if task.changed_files != old_changed or task.validation_results != old_validation:
+        progress = True
+    return task.id, before_status, progress
+
+
+def _recover_from_coordination_loop(ctx: _CoordinatorContext) -> None:
+    """Select the next ready executable task when meta-work stalls progress."""
+    if ctx.task_service is None:
+        return
+    ready = ctx.task_service.ready_queue()
+    if not ready:
+        return
+    for task in ready:
+        if task.mode in (TaskMode.IMPLEMENTATION, TaskMode.REPAIR, TaskMode.VERIFICATION):
+            ctx.workflow_state.pending_task_id = task.id
+            ctx.workflow_state.pending_actor = ctx.task_service.default_agent_for_task(task)
+            ctx.workflow_state.pending_status = task.status.value
+            ctx.workflow_state.pending_summary = "Loop recovery selected the next executable task."
+            ctx.workflow_state.no_progress_turns = 0
+            ctx.workflow_state.recovery_count += 1
+            ctx.workflow_state_repo.save(ctx.workflow_state)
+            return
+
+
+def _select_pending_turn(ctx: _CoordinatorContext) -> tuple[str, Any, str] | None:
+    """Choose the next actor/task from structured state."""
+    if ctx.task_service is None:
+        return None
+    state = ctx.workflow_state
+    if state.pending_status in {"plan_complete", "done", "approved", "implementation_complete"}:
+        return None
+    task = None
+    if state.pending_task_id:
+        task = ctx.task_service.get(state.pending_task_id)
+    if task is not None and state.pending_actor:
+        return state.pending_actor, task, task.status.value
+    task = ctx.task_service.next_ready_task()
+    if task is None:
+        return None
+    agent = ctx.task_service.default_agent_for_task(task)
+    state.pending_task_id = task.id
+    state.pending_actor = agent
+    state.pending_status = task.status.value
+    ctx.workflow_state_repo.save(state)
+    return agent, task, task.status.value
 
 
 # ── Coordinator loop ──────────────────────────────────────────────────────────
@@ -359,31 +722,35 @@ def _show_startup_popup(display, workspace: Path) -> str:
         return "r"
 
     handoff_path = workspace / "handoff.md"
-    status_line = ""
-    if handoff_path.exists():
-        text = handoff_path.read_text(errors="replace")
-        lines = text.splitlines()
-        status_l = next((line for line in reversed(lines) if line.startswith("STATUS:")), None)
-        next_l = next((line for line in reversed(lines) if line.startswith("NEXT:")), None)
-        parts = []
-        if status_l:
-            parts.append(status_l.split(":", 1)[1].strip())
-        if next_l:
-            parts.append("next → " + next_l.split(":", 1)[1].strip())
-        if parts:
-            status_line = "  ".join(parts)
-    else:
-        status_line = "no handoff.md — will be created"
+    tasks_path = workspace / "tasks.json"
+    has_plan = bool(_plan_files(workspace))
+    workflow_repo = WorkflowStateRepository(_state_dir(workspace) / WORKFLOW_STATE_FILE)
+    workflow_state = workflow_repo.load()
+    status_line = "no structured workflow state yet"
+    if tasks_path.exists():
+        try:
+            task_service = TaskService(JsonTaskRepository(tasks_path))
+            ready = task_service.ready_queue()
+            if workflow_state.pending_task_id and workflow_state.pending_actor:
+                status_line = f"task {workflow_state.pending_task_id}  next → {workflow_state.pending_actor}"
+            elif ready:
+                status_line = f"ready: {ready[0].id} ({ready[0].mode.value})"
+            else:
+                status_line = "no ready tasks"
+        except Exception:
+            status_line = "tasks.json parse error"
 
-    summary = f"Workspace: {workspace.name}\n{status_line}" if status_line else f"Workspace: {workspace.name}"
+    summary = f"Workspace: {workspace.name}\n{status_line}"
 
     options = [
-        ("r", "Run / continue"),
+        ("r", "Continue current handoff"),
         ("i", "Inspect handoff.md"),
         ("e", "Edit handoff.md"),
         ("s", "Reset sessions"),
-        ("q", "Quit"),
     ]
+    if has_plan:
+        options.append(("p", "Start adding new tasks from plan"))
+    options.append(("q", "Quit"))
 
     choice = display.show_error_dialog("AGENT COORDINATOR", summary, options, icon="▶")
 
@@ -416,6 +783,15 @@ def _show_startup_popup(display, workspace: Path) -> str:
         display._append_content("")
         return _show_startup_popup(display, workspace)
 
+    if choice == "p":
+        if _start_task_generation_from_plan(workspace):
+            display._append_content(f"  {display._theme.color_success}✓  Next turn set to add tasks from plan\033[0m")
+            display._append_content("")
+            return "r"
+        display._append_content(f"  {display._theme.color_warning}⚠  No plan documents found\033[0m")
+        display._append_content("")
+        return _show_startup_popup(display, workspace)
+
     return choice
 
     return choice
@@ -437,6 +813,8 @@ class _CoordinatorContext:
     handoff_reader: HandoffReader
     session_store: SessionStore
     event_log: EventLog
+    workflow_state_repo: WorkflowStateRepository
+    workflow_state: WorkflowState
     router: WorkflowRouter
     builder: PromptBuilder
     runner_cache: dict[str, AgentRunner]
@@ -515,10 +893,10 @@ def _setup_coordinator(
 
     runner_cache: dict[str, AgentRunner] = {}
 
-    tasks_path = workspace / "tasks.json"
-    task_service = (
-        TaskService(JsonTaskRepository(tasks_path), retry_policy=retry_policy) if tasks_path.exists() else None
-    )
+    tasks_path = _bootstrap_tasks(workspace)
+    task_service = TaskService(JsonTaskRepository(tasks_path), retry_policy=retry_policy)
+    workflow_state_repo = WorkflowStateRepository(_state_dir(workspace) / WORKFLOW_STATE_FILE)
+    workflow_state = _initial_workflow_state(workflow_state_repo, handoff_reader, task_service)
 
     if reset:
         session_store.clear()
@@ -554,6 +932,8 @@ def _setup_coordinator(
         handoff_reader=handoff_reader,
         session_store=session_store,
         event_log=event_log,
+        workflow_state_repo=workflow_state_repo,
+        workflow_state=workflow_state,
         router=router,
         builder=builder,
         runner_cache=runner_cache,
@@ -574,26 +954,19 @@ def _execute_turn(ctx: _CoordinatorContext) -> str:
     iteration, ``"return"`` to exit *run_coordinator* immediately, or ``"ok"``
     on success.
     """
-    message = ctx.handoff_reader.read()
-    if message is None:
-        ctx.logger.error("no valid handoff block found in handoff.md")
-        raise RuntimeError("No valid handoff block found — check handoff.md format")
-
-    decision = ctx.router.route(message)
-    status = message.status.value
-
-    if decision.is_terminal:
-        ctx.logger.info("workflow terminal", extra={"ctx": {"reason": decision.stop_reason}})
-        print(f"\n{decision.stop_reason}")
+    selection = _select_pending_turn(ctx)
+    if selection is None:
+        ctx.logger.info("workflow terminal", extra={"ctx": {"reason": "No ready tasks"}})
+        print("\nWorkflow complete ✅")
         return "break"
 
-    agent = decision.next_actor
+    agent, task, status = selection
 
     if agent == "human":
         from agent_coordinator.infrastructure.human_prompt import prompt_human_input
 
-        ctx.logger.info("awaiting human input", extra={"ctx": {"task": message.task_id}})
-        action = prompt_human_input(ctx.handoff_path, message.task_id, status, display=ctx.display)
+        ctx.logger.info("awaiting human input", extra={"ctx": {"task": task.id}})
+        action = prompt_human_input(ctx.handoff_path, task.id, status, display=ctx.display)
         if action == "quit":
             ctx.logger.info("human chose quit")
             return "break"
@@ -611,13 +984,13 @@ def _execute_turn(ctx: _CoordinatorContext) -> str:
         )
         raise RuntimeError(f"Unknown agent '{agent}'. Known: {', '.join(ctx.agents.keys())}")
 
-    return _run_agent_turn(ctx, agent, message, status)
+    return _run_agent_turn(ctx, agent, task, status)
 
 
 def _record_turn_result(
     ctx: _CoordinatorContext,
     agent: str,
-    message: Any,
+    task: Any,
     status: str,
     t_start: float,
     output_buffer: list[str],
@@ -626,27 +999,22 @@ def _record_turn_result(
     prompt_file: Path,
     prompt_hash: str,
 ) -> str:
-    """Verify the handoff update, log the event, and return a loop-control signal."""
+    """Update structured state from an agent result and return a loop-control signal."""
     ctx.turn_counts[agent] = ctx.turn_counts.get(agent, 0) + 1
     ctx.total_turns += 1
     duration_seconds = round(time.monotonic() - t_start, 2)
-    response_text = "".join(output_buffer)
-
-    if not handoff_updated:
-        ctx.logger.warning("agent did not update handoff", extra={"ctx": {"agent": agent}})
-        ctx.display.finish_agent_turn(success=False)
-        print(f"\nWARNING: handoff.md not updated by {agent}")
-        return "break"
-
-    new_message = ctx.handoff_reader.read()
+    response_text = run_result.text if getattr(run_result, "text", "") else "".join(output_buffer)
+    new_message = _extract_agent_message(response_text, ctx.handoff_reader)
     if new_message is None:
-        ctx.logger.error("invalid handoff block after agent turn", extra={"ctx": {"agent": agent}})
+        ctx.logger.error("invalid structured response after agent turn", extra={"ctx": {"agent": agent}})
         ctx.display.finish_agent_turn(success=False)
-        print(f"\nWARNING: Invalid handoff block after {agent}'s turn")
+        print(f"\nWARNING: No valid structured handoff block returned by {agent}")
         return "break"
 
+    task_id, previous_task_status, progress = _update_task_from_message(ctx, task.id, agent, new_message)
     new_status = new_message.status.value
     new_next = new_message.next
+    transition_key = _transition_key(task_id or task.id, status, new_status, agent)
 
     ctx.logger.info(
         "agent turn done",
@@ -659,36 +1027,44 @@ def _record_turn_result(
         },
     )
     ctx.display.finish_agent_turn(success=True, new_status=new_status, next_agent=new_next)
-
-    _sync_task_status(
-        ctx.task_service,
-        new_message.task_id,
-        new_message.status,
-        ctx.verbose,
-        event_log=ctx.event_log,
-        turn=ctx.total_turns,
-        agent=agent,
-    )
-
-    ctx.event_log.append(
-        turn=ctx.total_turns,
-        agent=agent,
-        task_id=message.task_id,
-        status_before=status,
-        status_after=new_status,
-        session_id=run_result.session_id,
-        response_text=response_text[:50_000],
-        prompt_file=str(prompt_file.relative_to(ctx.state)),
-        prompt_hash=prompt_hash,
-        duration_seconds=duration_seconds,
-    )
+    if transition_key not in ctx.workflow_state.transition_keys:
+        _append_handoff_log(ctx.handoff_path, new_message)
+        ctx.event_log.append(
+            turn=ctx.total_turns,
+            agent=agent,
+            task_id=task_id or task.id,
+            status_before=status,
+            status_after=new_status,
+            session_id=run_result.session_id,
+            response_text=response_text[:50_000],
+            prompt_file=str(prompt_file.relative_to(ctx.state)),
+            prompt_hash=prompt_hash,
+            duration_seconds=duration_seconds,
+            extra={"transition_key": transition_key},
+        )
+        ctx.workflow_state.transition_keys.append(transition_key)
+        ctx.workflow_state.last_transition_key = transition_key
+    ctx.workflow_state.pending_task_id = task_id or task.id
+    ctx.workflow_state.pending_actor = "" if new_next in ("none", "human") else new_next
+    ctx.workflow_state.pending_status = previous_task_status or new_status
+    ctx.workflow_state.pending_summary = new_message.summary
+    if new_status in {"approved", "done", "plan_complete", "implementation_complete"} or new_next == "none":
+        ctx.workflow_state.pending_task_id = ""
+        ctx.workflow_state.pending_actor = ""
+    if new_next == "human":
+        ctx.workflow_state.pending_actor = "human"
+    ctx.workflow_state.no_progress_turns = 0 if progress else ctx.workflow_state.no_progress_turns + 1
+    if ctx.workflow_state.no_progress_turns >= 2:
+        _recover_from_coordination_loop(ctx)
+    else:
+        ctx.workflow_state_repo.save(ctx.workflow_state)
     del response_text  # free the potentially large string
 
     time.sleep(1)
     return "ok"
 
 
-def _run_agent_turn(ctx: _CoordinatorContext, agent: str, message: Any, status: str) -> str:
+def _run_agent_turn(ctx: _CoordinatorContext, agent: str, task: Any, status: str) -> str:
     """Dispatch a single agent turn and record results.
 
     Returns ``"break"``, ``"return"``, or ``"ok"``.
@@ -703,10 +1079,17 @@ def _run_agent_turn(ctx: _CoordinatorContext, agent: str, message: Any, status: 
         ctx.runner_cache[agent] = r
     runner = ctx.runner_cache[agent]
     backend_name = agent_cfg.get("backend", ctx.default_backend)
+    use_stateless_mode = ctx.stateless and agent_supports_stateless_mode(agent, agent_cfg)
 
-    next_task = ctx.task_service.next_ready_task() if ctx.task_service else None
-    first_turn = True if ctx.stateless else ctx.session_store.get(agent) is None
-    prompt = ctx.builder.build(agent, ctx.workspace, ctx.handoff_reader.read_raw(), agent_cfg, next_task, first_turn)
+    first_turn = True if use_stateless_mode else ctx.session_store.get(agent) is None
+    state_summary = (
+        f"Structured workflow state\n"
+        f"- Current task: {task.id}\n"
+        f"- Mode: {task.mode.value}\n"
+        f"- Expected outputs: {', '.join(expected_outputs_for_mode(task.mode))}\n"
+        f"- Pending summary: {ctx.workflow_state.pending_summary or 'none'}\n"
+    )
+    prompt = ctx.builder.build(agent, ctx.workspace, state_summary, agent_cfg, task, first_turn)
 
     # ── Prompt persistence (1.2) ──────────────────────────────────────
     turn_num = ctx.total_turns + 1
@@ -722,16 +1105,13 @@ def _run_agent_turn(ctx: _CoordinatorContext, agent: str, message: Any, status: 
             "ctx": {
                 "agent": agent,
                 "backend": backend_name,
-                "task": message.task_id,
+                "task": task.id,
                 "status": status,
                 "turn": ctx.total_turns + 1,
             }
         },
     )
-    ctx.display.start_agent_turn(agent, backend_name, message.task_id, status)
-
-    hash_before = _file_hash(ctx.handoff_path)
-    handoff_updated = False
+    ctx.display.start_agent_turn(agent, backend_name, task.id, status)
 
     # ── Output capture (1.1) and timing (1.3) ────────────────────────
     output_buffer: list[str] = []
@@ -743,12 +1123,13 @@ def _run_agent_turn(ctx: _CoordinatorContext, agent: str, message: Any, status: 
 
     t_start = time.monotonic()
     run_result = None
+    handoff_updated = False
     for attempt in range(1 + DEFAULT_HANDOFF_RETRIES):
         try:
             run_result = runner.run(
                 message=prompt if attempt == 0 else _retry_prompt(agent, ctx.workspace),
                 workspace=ctx.workspace,
-                session_id=None if ctx.stateless else ctx.session_store.get(agent),
+                session_id=None if use_stateless_mode else ctx.session_store.get(agent),
                 model=agent_cfg.get("model"),
                 on_output=_on_output,
             )
@@ -775,11 +1156,9 @@ def _run_agent_turn(ctx: _CoordinatorContext, agent: str, message: Any, status: 
             # retry or reloaded config — break out of attempt loop and re-run the turn
             break
 
-        if not ctx.stateless:
+        if not use_stateless_mode:
             ctx.session_store.set(agent, run_result.session_id)
-        hash_after = _file_hash(ctx.handoff_path)
-
-        if hash_after != hash_before:
+        if _extract_agent_message(run_result.text, ctx.handoff_reader) is not None:
             handoff_updated = True
             break
 
@@ -798,7 +1177,7 @@ def _run_agent_turn(ctx: _CoordinatorContext, agent: str, message: Any, status: 
     return _record_turn_result(
         ctx,
         agent,
-        message,
+        task,
         status,
         t_start,
         output_buffer,
@@ -1048,6 +1427,7 @@ def _print_summary(total_turns: int, turn_counts: dict[str, int]) -> None:
 def _create_initial_handoff(workspace: Path) -> None:
     """Create an initial handoff.md (and default agents.json if absent) in the workspace."""
     workspace.mkdir(parents=True, exist_ok=True)
+    _bootstrap_tasks(workspace)
 
     handoff_path = workspace / "handoff.md"
     template = """---HANDOFF---
@@ -1088,16 +1468,19 @@ BLOCKERS:
                     "prompt_file": "prompts/architect.md",
                     "backend": "copilot",
                     "model": "claude-sonnet-4.6",
+                    "supportsStatelessMode": False,
                 },
                 "developer": {
                     "prompt_file": "prompts/developer.md",
                     "backend": "copilot",
                     "model": "claude-sonnet-4.6",
+                    "supportsStatelessMode": True,
                 },
                 "qa_engineer": {
                     "prompt_file": "prompts/qa_engineer.md",
                     "backend": "copilot",
                     "model": "claude-sonnet-4.6",
+                    "supportsStatelessMode": True,
                 },
             },
         }

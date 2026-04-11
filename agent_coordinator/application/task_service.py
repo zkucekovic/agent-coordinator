@@ -6,8 +6,11 @@ This is the single place where task state changes happen.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
+from agent_coordinator.application.task_classifier import default_agent_for_mode, infer_task_mode
 from agent_coordinator.domain.lifecycle import STANDARD_TRANSITIONS, validate_transition
-from agent_coordinator.domain.models import Task, TaskStatus
+from agent_coordinator.domain.models import Task, TaskMode, TaskStatus
 from agent_coordinator.domain.retry_policy import RetryPolicy
 
 
@@ -37,7 +40,21 @@ class TaskService:
 
     def all(self) -> list[Task]:
         """Return all tasks."""
-        return self._repo.all()
+        tasks = self._repo.all()
+        changed = False
+        for task in tasks:
+            if not isinstance(task.mode, TaskMode):
+                task.mode = infer_task_mode(
+                    task.title,
+                    task.description,
+                    task.acceptance_criteria,
+                    task.files_to_touch,
+                )
+                changed = True
+        if changed:
+            for task in tasks:
+                self._repo.save(task)
+        return tasks
 
     def next_ready_task(self) -> Task | None:
         """
@@ -47,18 +64,49 @@ class TaskService:
 
         Returns None if no task is ready.
         """
-        done_ids = {t.id for t in self._repo.all() if t.status == TaskStatus.DONE}
+        ready = self.ready_queue()
+        return ready[0] if ready else None
+
+    def ready_queue(self) -> list[Task]:
+        """Return ready tasks sorted by scheduling priority."""
+        tasks = self.all()
+        done_ids = {t.id for t in tasks if t.status == TaskStatus.DONE}
+        planning_sufficient = self.planning_is_sufficient(tasks)
         eligible_statuses = {
             TaskStatus.PLANNED,
             TaskStatus.READY_FOR_ENGINEERING,
             TaskStatus.REWORK_REQUESTED,
+            TaskStatus.READY_FOR_ARCHITECT_REVIEW,
         }
-        for task in self._repo.all():
+        ready: list[Task] = []
+        for task in tasks:
             if task.status not in eligible_statuses:
                 continue
+            if task.mode == TaskMode.VERIFICATION and not task.changed_files:
+                continue
             if all(dep in done_ids for dep in task.depends_on):
-                return task
-        return None
+                ready.append(task)
+        return sorted(ready, key=lambda task: self._scheduler_key(task, planning_sufficient))
+
+    def planning_is_sufficient(self, tasks: list[Task] | None = None) -> bool:
+        """Return True when execution should be preferred over more planning."""
+        tasks = tasks if tasks is not None else self.all()
+        for task in tasks:
+            if task.mode not in (TaskMode.IMPLEMENTATION, TaskMode.REPAIR):
+                continue
+            if task.status not in {
+                TaskStatus.PLANNED,
+                TaskStatus.READY_FOR_ENGINEERING,
+                TaskStatus.REWORK_REQUESTED,
+            }:
+                continue
+            if task.description or task.acceptance_criteria or task.files_to_touch:
+                return True
+        return False
+
+    def default_agent_for_task(self, task: Task) -> str:
+        """Return the default agent role for a task."""
+        return default_agent_for_mode(task.mode)
 
     def active_engineering_task(self) -> Task | None:
         """Return the task currently in IN_ENGINEERING state, or None."""
@@ -78,8 +126,6 @@ class TaskService:
         - transition is not in the allowed table
         - concurrency guard: another task is already IN_ENGINEERING
         """
-        from datetime import datetime, timezone
-
         task = self._require(task_id)
         validate_transition(task_id, task.status, new_status, self._transitions)
         self._check_concurrency(task_id, new_status)
@@ -119,6 +165,36 @@ class TaskService:
         task.acceptance_criteria = criteria
         self._repo.save(task)
 
+    def save(self, task: Task) -> None:
+        """Persist a mutated task."""
+        task.updated_at = datetime.now(timezone.utc).isoformat()
+        self._repo.save(task)
+
+    def ensure_task(
+        self,
+        task_id: str,
+        title: str,
+        *,
+        mode: TaskMode | None = None,
+        description: str = "",
+    ) -> Task:
+        """Return an existing task or create a minimal new one."""
+        task = self.get(task_id)
+        if task is not None:
+            return task
+        now = datetime.now(timezone.utc).isoformat()
+        task = Task(
+            id=task_id,
+            title=title,
+            status=TaskStatus.PLANNED,
+            mode=mode or infer_task_mode(title, description),
+            description=description,
+            created_at=now,
+            updated_at=now,
+        )
+        self._repo.save(task)
+        return task
+
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _require(self, task_id: str) -> Task:
@@ -133,6 +209,22 @@ class TaskService:
         active = self.active_engineering_task()
         if active is not None and active.id != task_id:
             raise ValueError(f"Cannot start {task_id!r}: task {active.id!r} is already in_engineering")
+
+    @staticmethod
+    def _scheduler_key(task: Task, planning_sufficient: bool) -> tuple[int, int, str, str]:
+        mode_order = {
+            TaskMode.IMPLEMENTATION: 0,
+            TaskMode.REPAIR: 1,
+            TaskMode.VERIFICATION: 2,
+            TaskMode.REVIEW: 3,
+            TaskMode.DISCOVERY: 4,
+            TaskMode.PLANNING: 5,
+        }
+        if not planning_sufficient and task.mode in (TaskMode.DISCOVERY, TaskMode.PLANNING):
+            mode_rank = -1
+        else:
+            mode_rank = mode_order[task.mode]
+        return (mode_rank, task.priority, task.created_at or "", task.id)
 
 
 class TaskRepository:

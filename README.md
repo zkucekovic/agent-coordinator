@@ -45,9 +45,9 @@ The coordinator creates two files in `./my-project/`:
   "default_backend": "copilot",
   "retry_policy": { "max_rework": 3, "on_exceed": "needs_human" },
   "agents": {
-    "architect":   { "backend": "copilot", "model": "claude-sonnet-4.6", "prompt_file": "prompts/architect.md" },
-    "developer":   { "backend": "copilot", "model": "claude-sonnet-4.6", "prompt_file": "prompts/developer.md" },
-    "qa_engineer": { "backend": "copilot", "model": "claude-sonnet-4.6", "prompt_file": "prompts/qa_engineer.md" }
+    "architect":   { "backend": "copilot", "model": "claude-sonnet-4.6", "prompt_file": "prompts/architect.md", "supportsStatelessMode": false },
+    "developer":   { "backend": "copilot", "model": "claude-sonnet-4.6", "prompt_file": "prompts/developer.md", "supportsStatelessMode": true },
+    "qa_engineer": { "backend": "copilot", "model": "claude-sonnet-4.6", "prompt_file": "prompts/qa_engineer.md", "supportsStatelessMode": true }
   }
 }
 ```
@@ -181,21 +181,24 @@ planned → in_engineering → ready_for_architect_review → done
     "architect": {
       "backend": "claude",
       "model": "claude-sonnet-4",
-      "prompt_file": "prompts/architect.md"
+      "prompt_file": "prompts/architect.md",
+      "supportsStatelessMode": false
     },
     "developer": {
       "backend": "copilot",
-      "prompt_file": "prompts/developer.md"
+      "prompt_file": "prompts/developer.md",
+      "supportsStatelessMode": true
     },
     "qa_engineer": {
       "backend": "opencode",
-      "prompt_file": "prompts/qa_engineer.md"
+      "prompt_file": "prompts/qa_engineer.md",
+      "supportsStatelessMode": true
     }
   }
 }
 ```
 
-Each agent can use a different backend. Built-in: `copilot`, `claude`, `opencode`, `manual` (human-in-the-loop). Any other value is resolved from PATH, or use `backend_config` for full control — see [docs/custom-backends.md](docs/custom-backends.md).
+Each agent can use a different backend. Built-in: `copilot`, `claude`, `opencode`, `manual` (human-in-the-loop). Any other value is resolved from PATH, or use `backend_config` for full control — see [docs/custom-backends.md](docs/custom-backends.md). Set `supportsStatelessMode: false` for agents that should keep their session even when the CLI runs with `--stateless`.
 
 ### CLI flags
 
@@ -208,7 +211,7 @@ Each agent can use a different backend. Built-in: `copilot`, `claude`, `opencode
 | `--quiet` | | Suppress TUI output |
 | `--output-lines N` | `10` | Agent output lines shown in TUI |
 | `--no-streaming` | | Show output all at once instead of streaming |
-| `--stateless` | | Run agents without session persistence (fresh context every turn) |
+| `--stateless` | | Run supported agents without session persistence (fresh context every turn) |
 | `--import FILE` | | Import a single specification or plan file into workspace |
 | `--import-specs PATH` | | Import a directory (or file) of specs into `<workspace>/specs/` |
 | `--import-plans PATH` | | Import a directory (or file) of plans into `<workspace>/plans/` (also extracts `tasks.json`) |
@@ -231,7 +234,7 @@ Folders take priority over single files. Use `--import-specs` / `--import-plans`
 
 ### Sessions
 
-Session IDs are saved in `<workspace>/.agent-coordinator/sessions.json`. Re-running resumes where you left off. Use `--reset` to start clean, or `--stateless` to skip session persistence entirely (every turn gets a fresh context with the full prompt).
+Session IDs are saved in `<workspace>/.agent-coordinator/sessions.json`. Re-running resumes where you left off. Use `--reset` to start clean. With `--stateless`, only agents whose config allows stateless mode get a fresh context every turn; agents with `supportsStatelessMode: false` keep using their saved sessions.
 
 ## Interactive control
 

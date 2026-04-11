@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 
 from agent_coordinator.application.task_service import TaskRepository
-from agent_coordinator.domain.models import Task, TaskStatus
+from agent_coordinator.domain.models import Task, TaskMode, TaskStatus
 
 _CURRENT_VERSION = 1
 
@@ -55,7 +55,19 @@ class JsonTaskRepository(TaskRepository):
                 id=item["id"],
                 title=item["title"],
                 status=TaskStatus(item["status"]),
+                mode=TaskMode(item.get("mode", TaskMode.IMPLEMENTATION.value)),
+                description=item.get("description", ""),
+                priority=int(item.get("priority", 100)),
+                owner=item.get("owner", ""),
                 acceptance_criteria=item.get("acceptance_criteria", []),
+                constraints=item.get("constraints", []),
+                files_to_touch=item.get("files_to_touch", []),
+                changed_files=item.get("changed_files", []),
+                artifacts=item.get("artifacts", []),
+                validation_results=item.get("validation_results", []),
+                validation_status=item.get("validation_status", "pending"),
+                unresolved_issues=item.get("unresolved_issues", []),
+                follow_up_tasks=item.get("follow_up_tasks", []),
                 rework_count=item.get("rework_count", 0),
                 depends_on=item.get("depends_on", []),
                 created_at=item.get("created_at", ""),
@@ -76,7 +88,19 @@ class JsonTaskRepository(TaskRepository):
             "id": task.id,
             "title": task.title,
             "status": task.status.value,
+            "mode": task.mode.value,
+            "description": task.description,
+            "priority": task.priority,
+            "owner": task.owner,
             "acceptance_criteria": task.acceptance_criteria,
+            "constraints": task.constraints,
+            "files_to_touch": task.files_to_touch,
+            "changed_files": task.changed_files,
+            "artifacts": task.artifacts,
+            "validation_results": task.validation_results,
+            "validation_status": task.validation_status,
+            "unresolved_issues": task.unresolved_issues,
+            "follow_up_tasks": task.follow_up_tasks,
             "rework_count": task.rework_count,
             "depends_on": task.depends_on,
             "created_at": task.created_at,
