@@ -51,9 +51,8 @@ class PromptBuilder:
                               full role prompt and shared rules preamble.
         """
         role_prompt = self._load_role_prompt(role, workspace, agent_cfg)
-        shared_rules = self._load_shared_rules(workspace)
         task_hint = f"(current task: {next_task.id})" if next_task else ""
-        task_context = self._task_context(next_task)
+        task_context = self._task_context(next_task, abbreviated=not first_turn)
 
         project_rules = self._load_project_rules(workspace)
         project_docs = self._load_project_docs(workspace) if first_turn else ""
@@ -66,7 +65,7 @@ class PromptBuilder:
             preamble = (
                 f"You are the **{role.upper()} agent** for this project. "
                 f"Your working directory is `{workspace}`.\n\n"
-                f"{role_prompt}{project_section}{docs_section}\n\n---\n\n{shared_rules}\n\n---\n"
+                f"{role_prompt}{project_section}{docs_section}\n\n---\n"
             )
         else:
             preamble = f"You are the **{role.upper()} agent**. Your working directory is `{workspace}`.\n\n"
@@ -117,11 +116,12 @@ class PromptBuilder:
         return ""
 
     def _load_project_docs(self, workspace: Path) -> str:
-        """Load specification and plan files from the workspace if present.
+        """Build a compact project-docs section for the first-turn prompt.
 
-        Checks for spec/plan directories first (loading all .md files within),
-        then falls back to single well-known filenames at the workspace root.
-        Returns concatenated content with section headers.
+        Instead of injecting full specification/plan text (which can be thousands
+        of tokens), emits a table-of-contents with file paths and the first
+        ``_DOC_PREVIEW_LINES`` lines of each file.  Agents can ``cat`` the full
+        file from disk when they need deeper detail.
         """
         spec_dirs = ("specs", "spec", "specifications")
         plan_dirs = ("plans", "plan", "implementation_plans")
@@ -148,30 +148,51 @@ class PromptBuilder:
         spec_files = self._find_docs_in_dirs(workspace, spec_dirs)
         if spec_files:
             for path in spec_files:
-                sections.append(
-                    f"## Project Specification (from {path.relative_to(workspace)})\n\n{path.read_text().strip()}"
-                )
+                sections.append(self._doc_summary(path, workspace, "Specification"))
         else:
             for name in spec_file_names:
                 path = workspace / name
                 if path.exists():
-                    sections.append(f"## Project Specification (from {name})\n\n{path.read_text().strip()}")
+                    sections.append(self._doc_summary(path, workspace, "Specification"))
                     break
 
         plan_files = self._find_docs_in_dirs(workspace, plan_dirs)
         if plan_files:
             for path in plan_files:
-                sections.append(
-                    f"## Implementation Plan (from {path.relative_to(workspace)})\n\n{path.read_text().strip()}"
-                )
+                sections.append(self._doc_summary(path, workspace, "Implementation Plan"))
         else:
             for name in plan_file_names:
                 path = workspace / name
                 if path.exists():
-                    sections.append(f"## Implementation Plan (from {name})\n\n{path.read_text().strip()}")
+                    sections.append(self._doc_summary(path, workspace, "Implementation Plan"))
                     break
 
         return "\n\n---\n\n".join(sections)
+
+    _DOC_PREVIEW_LINES = 40  # first N lines included in the prompt
+
+    @staticmethod
+    def _doc_summary(path: Path, workspace: Path, label: str) -> str:
+        """Return a compact summary of a document: heading + preview + read-more pointer."""
+        rel = path.relative_to(workspace)
+        text = path.read_text(errors="replace").strip()
+        lines = text.splitlines()
+        total = len(lines)
+
+        if total <= PromptBuilder._DOC_PREVIEW_LINES:
+            return f"## {label} (`{rel}` — {total} lines, shown in full)\n\n{text}"
+
+        # Extract markdown headings as a lightweight TOC
+        toc_lines = [ln for ln in lines if ln.startswith("#")]
+        toc = "\n".join(toc_lines[:20]) if toc_lines else "(no headings)"
+
+        preview = "\n".join(lines[: PromptBuilder._DOC_PREVIEW_LINES])
+        return (
+            f"## {label} (`{rel}` — {total} lines, preview below)\n\n"
+            f"**Outline:**\n{toc}\n\n"
+            f"**First {PromptBuilder._DOC_PREVIEW_LINES} lines:**\n{preview}\n\n"
+            f"_Read the full file at `{rel}` when you need more detail._"
+        )
 
     @staticmethod
     def _find_docs_in_dirs(workspace: Path, dir_names: tuple[str, ...]) -> list[Path]:
@@ -182,11 +203,26 @@ class PromptBuilder:
                 return sorted(p for p in d.rglob("*.md") if p.is_file())
         return []
 
-    @staticmethod
-    def _task_context(task: Task | None) -> str:
+    def _task_context(self, task: Task | None, *, abbreviated: bool = False) -> str:
+        """Build the task context block for the prompt.
+
+        When *abbreviated* is True (subsequent turns for the same task), only the
+        essential identifiers are emitted — the agent already has the full context
+        from the first turn.
+        """
         if task is None:
             return ""
         rework_note = f" (rework #{task.rework_count})" if task.rework_count > 0 else ""
+
+        if abbreviated:
+            return (
+                f"### Current task{rework_note}\n\n"
+                f"- **ID**: {task.id}\n"
+                f"- **Title**: {task.title}\n"
+                f"- **Status**: {task.status.value}\n"
+                f"- **Mode**: {task.mode.value}\n\n"
+            )
+
         return (
             f"### Next ready task{rework_note}\n\n"
             f"- **ID**: {task.id}\n"

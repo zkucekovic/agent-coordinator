@@ -40,7 +40,8 @@ class TestPromptBuilder(unittest.TestCase):
         )
         self.assertIn("You are the architect.", prompt)
 
-    def test_first_turn_includes_shared_rules(self):
+    def test_first_turn_does_not_inject_shared_rules_separately(self):
+        """shared_rules.md is no longer injected as a separate section (merged into role prompts)."""
         prompt = self._builder.build(
             role="architect",
             workspace=self._workspace,
@@ -48,7 +49,9 @@ class TestPromptBuilder(unittest.TestCase):
             agent_cfg=self._cfg(),
             first_turn=True,
         )
-        self.assertIn("Rule 1: be helpful.", prompt)
+        # The role prompt is included, but shared_rules.md content is NOT injected separately
+        self.assertIn("You are the architect.", prompt)
+        self.assertNotIn("Rule 1: be helpful.", prompt)
 
     def test_subsequent_turn_omits_role_prompt_body(self):
         prompt = self._builder.build(
@@ -135,7 +138,6 @@ class TestPromptBuilder(unittest.TestCase):
             coord_prompts = coord_dir / "prompts"
             coord_prompts.mkdir()
             (coord_prompts / "special.md").write_text("Coordinator-level prompt.")
-            (coord_prompts / "shared_rules.md").write_text("Coordinator rules.")
 
             builder = PromptBuilder(coordinator_dir=coord_dir)
             prompt = builder.build(
@@ -146,7 +148,6 @@ class TestPromptBuilder(unittest.TestCase):
                 first_turn=True,
             )
             self.assertIn("Coordinator-level prompt.", prompt)
-            self.assertIn("Coordinator rules.", prompt)
         finally:
             import shutil
 
@@ -217,7 +218,7 @@ class TestPromptBuilder(unittest.TestCase):
             first_turn=True,
         )
         self.assertIn("Build a REST API.", prompt)
-        self.assertIn("Project Specification", prompt)
+        self.assertIn("Specification", prompt)
 
     def test_spec_md_variant_detected(self):
         """spec.md is also detected as a specification file."""
@@ -298,7 +299,7 @@ class TestPromptBuilder(unittest.TestCase):
         )
         self.assertIn("Auth spec content.", prompt)
         self.assertIn("Payments spec content.", prompt)
-        self.assertIn("Project Specification", prompt)
+        self.assertIn("Specification", prompt)
 
     def test_plans_directory_loads_all_md_files(self):
         """plans/ directory: all .md files are injected on first turn."""
@@ -400,6 +401,37 @@ class TestPromptBuilder(unittest.TestCase):
             first_turn=True,
         )
         self.assertIn("specs/core.md", prompt)
+
+    def test_large_spec_is_previewed_not_full(self):
+        """Large spec files get a preview + pointer instead of full injection."""
+        long_content = "\n".join([f"# Section {i}\nContent for section {i}." for i in range(60)])
+        (self._workspace / "SPECIFICATION.md").write_text(long_content)
+        prompt = self._builder.build(
+            role="architect",
+            workspace=self._workspace,
+            handoff_content="",
+            agent_cfg=self._cfg(),
+            first_turn=True,
+        )
+        self.assertIn("preview below", prompt)
+        self.assertIn("Read the full file", prompt)
+        # First few sections should be present
+        self.assertIn("Section 0", prompt)
+        # Later sections should NOT be in the prompt
+        self.assertNotIn("Section 55", prompt)
+
+    def test_small_spec_is_shown_in_full(self):
+        """Small spec files are shown completely."""
+        (self._workspace / "SPECIFICATION.md").write_text("# Spec\nSmall spec.")
+        prompt = self._builder.build(
+            role="architect",
+            workspace=self._workspace,
+            handoff_content="",
+            agent_cfg=self._cfg(),
+            first_turn=True,
+        )
+        self.assertIn("shown in full", prompt)
+        self.assertIn("Small spec.", prompt)
 
 
 if __name__ == "__main__":

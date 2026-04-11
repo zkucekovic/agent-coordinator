@@ -794,8 +794,6 @@ def _show_startup_popup(display, workspace: Path) -> str:
 
     return choice
 
-    return choice
-
 
 # ── Coordinator context & helpers ─────────────────────────────────────────────
 
@@ -987,6 +985,11 @@ def _execute_turn(ctx: _CoordinatorContext) -> str:
     return _run_agent_turn(ctx, agent, task, status)
 
 
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimate: ~1.3 tokens per whitespace-delimited word."""
+    return int(len(text.split()) * 1.3)
+
+
 def _record_turn_result(
     ctx: _CoordinatorContext,
     agent: str,
@@ -1040,7 +1043,11 @@ def _record_turn_result(
             prompt_file=str(prompt_file.relative_to(ctx.state)),
             prompt_hash=prompt_hash,
             duration_seconds=duration_seconds,
-            extra={"transition_key": transition_key},
+            extra={
+                "transition_key": transition_key,
+                "prompt_tokens_est": _estimate_tokens(prompt_file.read_text(errors="replace")) if prompt_file.exists() else 0,
+                "response_tokens_est": _estimate_tokens(response_text),
+            },
         )
         ctx.workflow_state.transition_keys.append(transition_key)
         ctx.workflow_state.last_transition_key = transition_key
