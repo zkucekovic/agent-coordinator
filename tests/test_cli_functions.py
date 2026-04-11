@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 from agent_coordinator.cli import (
     _DEFAULT_AGENTS,
+    _copy_default_prompts,
     _create_initial_handoff,
     _execute_startup_action,
     _file_hash,
@@ -211,6 +212,49 @@ class TestCreateInitialHandoff(unittest.TestCase):
             content = (ws / "handoff.md").read_text()
             self.assertIn("---HANDOFF---", content)
             self.assertIn("---END---", content)
+
+    def test_init_copies_default_prompts(self):
+        with TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "ws"
+            ws.mkdir()
+            _create_initial_handoff(ws)
+            prompts_dir = ws / "prompts"
+            self.assertTrue(prompts_dir.is_dir())
+            self.assertTrue((prompts_dir / "architect.md").exists())
+            self.assertTrue((prompts_dir / "developer.md").exists())
+            self.assertTrue((prompts_dir / "qa_engineer.md").exists())
+            self.assertTrue((prompts_dir / "planner_helper.md").exists())
+
+    def test_init_does_not_overwrite_existing_prompts(self):
+        with TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "ws"
+            ws.mkdir()
+            prompts_dir = ws / "prompts"
+            prompts_dir.mkdir()
+            custom = prompts_dir / "architect.md"
+            custom.write_text("# My custom architect")
+            _create_initial_handoff(ws)
+            self.assertEqual(custom.read_text(), "# My custom architect")
+
+
+class TestCopyDefaultPrompts(unittest.TestCase):
+    def test_copies_prompts_to_workspace(self):
+        with TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "ws"
+            ws.mkdir()
+            _copy_default_prompts(ws)
+            self.assertTrue((ws / "prompts" / "architect.md").exists())
+            self.assertTrue((ws / "prompts" / "planner_helper.md").exists())
+
+    def test_does_not_overwrite_existing_file(self):
+        with TemporaryDirectory() as tmp:
+            ws = Path(tmp) / "ws"
+            ws.mkdir()
+            (ws / "prompts").mkdir()
+            custom = ws / "prompts" / "architect.md"
+            custom.write_text("custom content")
+            _copy_default_prompts(ws)
+            self.assertEqual(custom.read_text(), "custom content")
 
 
 class TestPlanStartupHelpers(unittest.TestCase):

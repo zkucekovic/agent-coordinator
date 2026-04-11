@@ -131,13 +131,40 @@ class TestPromptBuilder(unittest.TestCase):
         )
         self.assertIn("DEVELOPER", prompt)
 
-    def test_coordinator_dir_prompt_takes_priority(self):
-        """P5: Prompt files are resolved from coordinator_dir before workspace."""
+    def test_workspace_prompt_takes_priority_over_coordinator_dir(self):
+        """P5: Workspace prompt files override coordinator_dir (package) defaults."""
         coord_dir = Path(tempfile.mkdtemp())
         try:
             coord_prompts = coord_dir / "prompts"
             coord_prompts.mkdir()
-            (coord_prompts / "special.md").write_text("Coordinator-level prompt.")
+            (coord_prompts / "architect.md").write_text("Package-level architect prompt.")
+
+            ws_prompts = self._workspace / "prompts"
+            ws_prompts.mkdir(exist_ok=True)
+            (ws_prompts / "architect.md").write_text("User-customised architect prompt.")
+
+            builder = PromptBuilder(coordinator_dir=coord_dir)
+            prompt = builder.build(
+                role="architect",
+                workspace=self._workspace,
+                handoff_content="",
+                agent_cfg={"prompt_file": "prompts/architect.md"},
+                first_turn=True,
+            )
+            self.assertIn("User-customised architect prompt.", prompt)
+            self.assertNotIn("Package-level architect prompt.", prompt)
+        finally:
+            import shutil
+
+            shutil.rmtree(coord_dir, ignore_errors=True)
+
+    def test_coordinator_dir_used_as_fallback_when_not_in_workspace(self):
+        """P5: If file not in workspace, falls back to coordinator_dir."""
+        coord_dir = Path(tempfile.mkdtemp())
+        try:
+            coord_prompts = coord_dir / "prompts"
+            coord_prompts.mkdir()
+            (coord_prompts / "special.md").write_text("Package-fallback prompt.")
 
             builder = PromptBuilder(coordinator_dir=coord_dir)
             prompt = builder.build(
@@ -147,7 +174,7 @@ class TestPromptBuilder(unittest.TestCase):
                 agent_cfg={"prompt_file": "prompts/special.md"},
                 first_turn=True,
             )
-            self.assertIn("Coordinator-level prompt.", prompt)
+            self.assertIn("Package-fallback prompt.", prompt)
         finally:
             import shutil
 
@@ -165,8 +192,8 @@ class TestPromptBuilder(unittest.TestCase):
         )
         self.assertIn("You are the architect.", prompt)
 
-    def test_workspace_fallback_when_not_in_coordinator_dir(self):
-        """P5: If file not in coordinator_dir, falls back to workspace."""
+    def test_workspace_prompt_used_when_file_only_in_workspace(self):
+        """P5: If prompt only in workspace (not coordinator_dir), workspace is used."""
         coord_dir = Path(tempfile.mkdtemp())
         try:
             builder = PromptBuilder(coordinator_dir=coord_dir)

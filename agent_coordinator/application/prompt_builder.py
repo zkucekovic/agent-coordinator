@@ -86,14 +86,14 @@ class PromptBuilder:
         )
 
     def _resolve_file(self, relative_path: str, workspace: Path) -> Path | None:
-        """Resolve a file relative to coordinator_dir first, then workspace."""
+        """Resolve a file relative to workspace first, falling back to coordinator_dir."""
+        candidate = workspace / relative_path
+        if candidate.exists():
+            return candidate
         if self._coordinator_dir:
             candidate = self._coordinator_dir / relative_path
             if candidate.exists():
                 return candidate
-        candidate = workspace / relative_path
-        if candidate.exists():
-            return candidate
         return None
 
     def _load_role_prompt(self, role: str, workspace: Path, agent_cfg: dict) -> str:

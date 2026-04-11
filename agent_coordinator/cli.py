@@ -1582,6 +1582,29 @@ BLOCKERS:
         agents_path.write_text(json.dumps(default_agents_cfg, indent=4))
         print(f"Created default agents.json in {workspace}")
 
+    # Copy default prompts to workspace so users can customise them.
+    # Workspace prompts take priority over package defaults (workspace-first resolution).
+    _copy_default_prompts(workspace)
+
+
+def _copy_default_prompts(workspace: Path) -> None:
+    """Copy built-in prompt files to {workspace}/prompts/ if not already present."""
+    import shutil
+
+    package_prompts = Path(__file__).parent / "prompts"
+    if not package_prompts.is_dir():
+        return
+    dest_dir = workspace / "prompts"
+    dest_dir.mkdir(exist_ok=True)
+    copied = []
+    for src in sorted(package_prompts.glob("*.md")):
+        dest = dest_dir / src.name
+        if not dest.exists():
+            shutil.copy2(src, dest)
+            copied.append(src.name)
+    if copied:
+        print(f"Copied default prompts to {dest_dir}: {', '.join(copied)}")
+
 
 def _do_startup_init(action: dict, _args: argparse.Namespace) -> None:
     workspace = action.get("workspace", Path(DEFAULT_WORKSPACE).resolve())
