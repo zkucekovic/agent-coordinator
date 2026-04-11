@@ -9,6 +9,10 @@
             "prompt_file": "prompts/architect.md",
             "supportsStatelessMode": false
         },
+        "planner_helper": {
+            "prompt_file": "prompts/planner_helper.md",
+            "supportsStatelessMode": true
+        },
         "developer": {
             "prompt_file": "prompts/developer.md",
             "supportsStatelessMode": true

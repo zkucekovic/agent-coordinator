@@ -70,6 +70,7 @@ class _QuitSignalError(Exception):
 
 _DEFAULT_AGENTS: dict = {
     "architect": {"prompt_file": "prompts/architect.md", "supportsStatelessMode": False},
+    "planner_helper": {"prompt_file": "prompts/planner_helper.md", "supportsStatelessMode": True},
     "developer": {"prompt_file": "prompts/developer.md", "supportsStatelessMode": True},
     "qa_engineer": {"prompt_file": "prompts/qa_engineer.md", "supportsStatelessMode": True},
 }
@@ -1557,6 +1558,12 @@ BLOCKERS:
                     "backend": "copilot",
                     "model": "claude-sonnet-4.6",
                     "supportsStatelessMode": False,
+                },
+                "planner_helper": {
+                    "prompt_file": "prompts/planner_helper.md",
+                    "backend": "copilot",
+                    "model": "claude-haiku-4.5",
+                    "supportsStatelessMode": True,
                 },
                 "developer": {
                     "prompt_file": "prompts/developer.md",
