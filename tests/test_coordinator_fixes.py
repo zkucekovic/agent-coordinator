@@ -13,6 +13,7 @@ from agent_coordinator.cli import (
     _DEFAULT_AGENTS,
     _HANDOFF_TO_TASK_STATUS,
     _file_hash,
+    _normalize_handoff_from_text,
     _record_turn_result,
     _retry_prompt,
     _sync_task_status,
@@ -300,6 +301,70 @@ BLOCKERS:
         handoff_content = handoff_path.read_text()
         self.assertEqual(handoff_content.count("implemented auth"), 1)
         self.assertEqual(len(ctx.event_log.read_all()), 1)
+
+
+class TestNormalizeHandoffFromText(unittest.TestCase):
+    """Tests for _normalize_handoff_from_text fallback normalizer."""
+
+    def test_normalizes_loose_fields(self):
+        text = (
+            "Here is my update:\n\n"
+            "ROLE: developer\n"
+            "STATUS: done\n"
+            "NEXT: qa_engineer\n"
+            "TASK_ID: task-42\n"
+            "TITLE: Implement login\n"
+            "SUMMARY: Added JWT auth flow\n"
+            "ACCEPTANCE:\n- tests pass\n"
+            "CHANGED_FILES:\n- src/auth.py\n"
+        )
+        result = _normalize_handoff_from_text(text)
+        self.assertIsNotNone(result)
+        self.assertIn("---HANDOFF---", result)
+        self.assertIn("---END---", result)
+        self.assertIn("ROLE: developer", result)
+        self.assertIn("TASK_ID: task-42", result)
+
+    def test_returns_none_when_fields_missing(self):
+        text = "ROLE: developer\nSTATUS: done\nSome random text"
+        result = _normalize_handoff_from_text(text)
+        self.assertIsNone(result)
+
+    def test_all_six_required_fields_needed(self):
+        text = (
+            "ROLE: developer\n"
+            "STATUS: done\n"
+            "NEXT: qa_engineer\n"
+            "TASK_ID: task-1\n"
+            "TITLE: Fix bug\n"
+            # Missing SUMMARY
+        )
+        result = _normalize_handoff_from_text(text)
+        self.assertIsNone(result)
+
+    def test_normalized_block_is_parseable(self):
+        from agent_coordinator.handoff_parser import extract_latest
+
+        text = (
+            "ROLE: architect\n"
+            "STATUS: continue\n"
+            "NEXT: developer\n"
+            "TASK_ID: task-99\n"
+            "TITLE: Design API\n"
+            "SUMMARY: Created API spec\n"
+            "ACCEPTANCE:\n- spec reviewed\n"
+            "CONSTRAINTS:\n- REST only\n"
+            "FILES_TO_TOUCH:\n- api.py\n"
+            "CHANGED_FILES:\n- docs/api.md\n"
+            "VALIDATION:\n- linter passes\n"
+            "BLOCKERS:\n- none\n"
+        )
+        result = _normalize_handoff_from_text(text)
+        self.assertIsNotNone(result)
+        message, errors = extract_latest(result)
+        self.assertIsNotNone(message)
+        self.assertEqual(message.role, "architect")
+        self.assertEqual(message.task_id, "task-99")
 
 
 if __name__ == "__main__":

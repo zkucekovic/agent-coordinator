@@ -498,11 +498,67 @@ def _append_handoff_log(handoff_path: Path, message: HandoffMessage) -> None:
 
 
 def _extract_agent_message(response_text: str, handoff_reader: HandoffReader) -> HandoffMessage | None:
-    """Parse a structured handoff block from agent output, with file fallback."""
+    """Parse a structured handoff block from agent output, with normalization fallback."""
     message, _errors = extract_latest(response_text)
     if message is not None:
         return message
+
+    # Try to normalize: agent may have included fields but without markers
+    normalized = _normalize_handoff_from_text(response_text)
+    if normalized is not None:
+        message, _errors = extract_latest(normalized)
+        if message is not None:
+            return message
+
     return handoff_reader.read()
+
+
+def _normalize_handoff_from_text(text: str) -> str | None:
+    """Try to reconstruct a handoff block from loose ROLE/STATUS/NEXT fields in text.
+
+    Returns a string with ---HANDOFF---/---END--- markers if all required scalar
+    fields are found, or None if normalization isn't possible.
+    """
+    import re
+
+    required = ["ROLE", "STATUS", "NEXT", "TASK_ID", "TITLE", "SUMMARY"]
+    fields: dict[str, str] = {}
+    for field in required:
+        match = re.search(rf"^{field}:\s*(.+)$", text, re.MULTILINE)
+        if match:
+            fields[field] = match.group(1).strip()
+
+    if len(fields) < len(required):
+        return None
+
+    # Extract the region from first field to last field + remaining list items
+    first_pos = len(text)
+    last_pos = 0
+    for field in required:
+        match = re.search(rf"^{field}:", text, re.MULTILINE)
+        if match:
+            first_pos = min(first_pos, match.start())
+            last_pos = max(last_pos, match.end())
+
+    # Extend to capture list fields that follow
+    list_fields = ["ACCEPTANCE", "CONSTRAINTS", "FILES_TO_TOUCH", "CHANGED_FILES", "VALIDATION", "BLOCKERS"]
+    for field in list_fields:
+        match = re.search(rf"^{field}:", text, re.MULTILINE)
+        if match:
+            last_pos = max(last_pos, match.end())
+            # Capture subsequent bullet lines
+            remaining = text[match.end():]
+            for line in remaining.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("- ") or not stripped:
+                    last_pos = match.end() + len(line) + 1
+                elif re.match(r"^[A-Z_]+:", stripped):
+                    break
+                else:
+                    break
+
+    block_content = text[first_pos:last_pos].strip()
+    return f"---HANDOFF---\n{block_content}\n---END---"
 
 
 def _transition_key(task_id: str, from_status: str, to_status: str, assigned_agent: str) -> str:
@@ -825,6 +881,7 @@ class _CoordinatorContext:
     logger: Any
     turn_counts: dict[str, int] = dataclasses.field(default_factory=dict)
     total_turns: int = 0
+    first_turn_done: set[str] = dataclasses.field(default_factory=set)
 
 
 def _setup_coordinator(
@@ -990,6 +1047,35 @@ def _estimate_tokens(text: str) -> int:
     return int(len(text.split()) * 1.3)
 
 
+def _build_state_summary(ctx: _CoordinatorContext, agent: str, task: Any) -> str:
+    """Build the state summary injected into every agent turn.
+
+    For the architect, includes pre-computed planning context (ready queue,
+    planning sufficiency) so the frontier model doesn't waste tokens on
+    mechanical analysis the coordinator can do in Python.
+    """
+    lines = [
+        "Structured workflow state",
+        f"- Current task: {task.id}",
+        f"- Mode: {task.mode.value}",
+        f"- Expected outputs: {', '.join(expected_outputs_for_mode(task.mode))}",
+        f"- Pending summary: {ctx.workflow_state.pending_summary or 'none'}",
+    ]
+
+    if agent == "architect":
+        ready = ctx.task_service.ready_queue()
+        all_tasks = ctx.task_service.all()
+        done = [t for t in all_tasks if t.status == TaskStatus.DONE]
+        planning_ok = ctx.task_service.planning_is_sufficient()
+        lines.append(f"- Tasks: {len(done)} done, {len(ready)} ready, {len(all_tasks)} total")
+        lines.append(f"- Planning sufficient: {'yes' if planning_ok else 'no — more decomposition needed'}")
+        if ready:
+            queue_str = ", ".join(f"{t.id} ({t.mode.value})" for t in ready[:5])
+            lines.append(f"- Ready queue: {queue_str}")
+
+    return "\n".join(lines) + "\n"
+
+
 def _record_turn_result(
     ctx: _CoordinatorContext,
     agent: str,
@@ -1088,14 +1174,9 @@ def _run_agent_turn(ctx: _CoordinatorContext, agent: str, task: Any, status: str
     backend_name = agent_cfg.get("backend", ctx.default_backend)
     use_stateless_mode = ctx.stateless and agent_supports_stateless_mode(agent, agent_cfg)
 
-    first_turn = True if use_stateless_mode else ctx.session_store.get(agent) is None
-    state_summary = (
-        f"Structured workflow state\n"
-        f"- Current task: {task.id}\n"
-        f"- Mode: {task.mode.value}\n"
-        f"- Expected outputs: {', '.join(expected_outputs_for_mode(task.mode))}\n"
-        f"- Pending summary: {ctx.workflow_state.pending_summary or 'none'}\n"
-    )
+    first_turn = agent not in ctx.first_turn_done if use_stateless_mode else ctx.session_store.get(agent) is None
+    ctx.first_turn_done.add(agent)
+    state_summary = _build_state_summary(ctx, agent, task)
     prompt = ctx.builder.build(agent, ctx.workspace, state_summary, agent_cfg, task, first_turn)
 
     # ── Prompt persistence (1.2) ──────────────────────────────────────
